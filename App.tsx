@@ -159,13 +159,13 @@ const App: React.FC = () => {
         isShining: false
       });
       list.push({
-        text: isRTL ? 'اقتلع نفسك من دوامات التشتت ووسائل التواصل الاجتماعي، وزاحم كوكبة القُراء وطلاب العلم' : '"Reading is a ticket to elevate from the common to the elite." — Start now.',
+        text: isRTL ? 'اقتلع نفسك من دوامات التشتت والتفاهة، وزاحم كوكبة القُراء وطلاب العلم' : '"Reading is a ticket to elevate from the common to the elite." — Start now.',
         icon: <BrainCircuit size={16} className="text-purple-400" />,
         color: 'border-purple-500/20 bg-purple-500/5',
         isShining: true
       });
       list.push({
-        text: isRTL ? 'قاعدة الـ 3%: كرر وردك الفكري كل يوم والتزم به فصروح العلم لا يصلها المتكاسلين' : 'The act of reading is not just information, it is a daily exercise for the wisdom muscle.',
+        text: isRTL ? 'قاعدة الـ 3%: كرر وردك الفكري كل يوم والتزم به في صروح العلم ' : 'The act of reading is not just information, it is a daily exercise for the wisdom muscle.',
         icon: <BookOpen size={16} className="text-blue-400" />,
         color: 'border-blue-500/20 bg-blue-500/5',
         isShining: false
