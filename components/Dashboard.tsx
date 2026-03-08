@@ -31,7 +31,7 @@ const ANALYTICAL_COLORS = [
   '#ef4444'  // Sanctuary Red
 ];
 
-export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBack }) => {
+export const Dashboard: React.FC<DashboardProps> = React.memo(({ books, shelves, lang, onBack }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const t = translations[lang];
   const isRTL = lang === 'ar';
@@ -147,7 +147,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
             </div>
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col md:flex-row md:items-center gap-4">
             {/* Shields Display */}
             <div className="flex items-center gap-2 bg-blue-600/10 px-4 py-2 rounded-full border border-blue-600/20 backdrop-blur-md">
               <ShieldCheck className="size-4 text-blue-500" />
@@ -757,4 +757,4 @@ export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBa
       </AnimatePresence>
     </MotionDiv>
   );
-};
+});
