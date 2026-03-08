@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { ViewState, Language, Insight } from './types';
-import type { Book, ShelfData } from './types';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ViewState } from './types';
+import type { Language, Insight, Book, ShelfData } from './types';
 import { Layout } from './components/Layout';
 import { Shelf } from './components/Shelf';
 import { Reader } from './components/Reader';
@@ -71,12 +71,12 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleOnboardingComplete = React.useCallback(() => {
+  const handleOnboardingComplete = useCallback(() => {
     localStorage.setItem('sanctuary_onboarding_seen', 'true');
     setShowOnboarding(false);
   }, []);
 
-  const confirmDeleteBook = React.useCallback(async () => {
+  const confirmDeleteBook = useCallback(async () => {
     if (!bookToDelete || deleteConfirmInput !== 'امسح من المحراب') return;
     
     await pdfStorage.deleteFile(bookToDelete.id);
@@ -113,13 +113,13 @@ const App: React.FC = () => {
   }, []);
 
   const t = translations[lang];
-  const filteredBooks = React.useMemo(() => books.filter(b => b.shelfId === activeShelfId), [books, activeShelfId]);
+  const filteredBooks = useMemo(() => books.filter(b => b.shelfId === activeShelfId), [books, activeShelfId]);
   const fontClass = lang === 'ar' ? 'font-ar' : 'font-en';
 
-  const habitData = React.useMemo(() => storageService.getHabitData(), [books]);
+  const habitData = useMemo(() => storageService.getHabitData(), [books]);
   const habitStreak = habitData.streak;
 
-  const totalTodayMinutes = React.useMemo(() => {
+  const totalTodayMinutes = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     return Math.floor(books.reduce((acc, b) => {
       if (b.lastReadDate === today) return acc + (b.dailyTimeSeconds || 0);
@@ -127,7 +127,7 @@ const App: React.FC = () => {
     }, 0) / 60);
   }, [books]);
 
-  const activeBookStats = React.useMemo(() => {
+  const activeBookStats = useMemo(() => {
     if (filteredBooks.length > 0 && filteredBooks[activeBookIndex]) {
       const book = filteredBooks[activeBookIndex];
       return {
@@ -139,7 +139,7 @@ const App: React.FC = () => {
   }, [filteredBooks, activeBookIndex]);
 
   const booksCount = books.length;
-  const insights = React.useMemo<Insight[]>(() => {
+  const insights = useMemo<Insight[]>(() => {
     const list: Insight[] = [];
     const isRTL = lang === 'ar';
     const streak = habitData.streak;
@@ -328,19 +328,19 @@ const App: React.FC = () => {
     if (activeShelfId === shelfId) setActiveShelfId('default');
   };
 
-  const handleReaderBack = React.useCallback(() => {
+  const handleReaderBack = useCallback(() => {
     setBooks(storageService.getBooks());
     setView(ViewState.SHELF);
   }, []);
 
-  const handleStatsUpdate = React.useCallback((starReached?: number | null) => {
+  const handleStatsUpdate = useCallback((starReached?: number | null) => {
     setBooks(storageService.getBooks());
     if (starReached) {
       setCelebrationStar(starReached);
     }
   }, []);
 
-  const handleCelebrationComplete = React.useCallback(() => {
+  const handleCelebrationComplete = useCallback(() => {
     setCelebrationStar(null);
   }, []);
 
