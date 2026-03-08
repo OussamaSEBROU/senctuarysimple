@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ViewState, Language, Insight } from './types';
 import type { Book, ShelfData } from './types';
@@ -72,12 +71,12 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleOnboardingComplete = () => {
+  const handleOnboardingComplete = useCallback(() => {
     localStorage.setItem('sanctuary_onboarding_seen', 'true');
     setShowOnboarding(false);
-  };
+  }, []);
 
-  const confirmDeleteBook = async () => {
+  const confirmDeleteBook = useCallback(async () => {
     if (!bookToDelete || deleteConfirmInput !== 'امسح من المحراب') return;
     
     await pdfStorage.deleteFile(bookToDelete.id);
@@ -92,7 +91,7 @@ const App: React.FC = () => {
     if (activeBookIndex >= updatedBooks.filter(b => b.shelfId === activeShelfId).length) {
       setActiveBookIndex(Math.max(0, updatedBooks.filter(b => b.shelfId === activeShelfId).length - 1));
     }
-  };
+  }, [bookToDelete, deleteConfirmInput, activeBookIndex, activeShelfId]);
 
   useEffect(() => {
     if (view === ViewState.SHELF) {
@@ -114,7 +113,7 @@ const App: React.FC = () => {
   }, []);
 
   const t = translations[lang];
-  const filteredBooks = books.filter(b => b.shelfId === activeShelfId);
+  const filteredBooks = useMemo(() => books.filter(b => b.shelfId === activeShelfId), [books, activeShelfId]);
   const fontClass = lang === 'ar' ? 'font-ar' : 'font-en';
 
   const habitData = useMemo(() => storageService.getHabitData(), [books]);
@@ -139,13 +138,14 @@ const App: React.FC = () => {
     return { minutes: 0, stars: 0 };
   }, [filteredBooks, activeBookIndex]);
 
+  const booksCount = books.length;
   const insights = useMemo<Insight[]>(() => {
     const list: Insight[] = [];
     const isRTL = lang === 'ar';
     const streak = habitData.streak;
     
     // 0. First Experience / Empty State (Strictly Exclusive)
-    if (books.length === 0) {
+    if (booksCount === 0) {
       list.push({
         text: isRTL ? 'مرحباً بك .. في منصة المحراب تؤسس وعيك وتمركز ثقافتك كل يوم' : 'Welcome to the elite.. Here we craft awareness and reshape thought.',
         icon: <Sparkles size={16} className="text-[#ff0000] drop-shadow-[0_0_8px_rgba(255,0,0,0.6)]" />,
@@ -177,7 +177,7 @@ const App: React.FC = () => {
         isShining: true
       });
       
-      return list; // Return early so daily habit notes don't show for empty state
+      return list;
     }
 
     // 1. Rescue Alert (Only for active users)
@@ -235,16 +235,16 @@ const App: React.FC = () => {
     }
 
     // 5. Library Stats
-    const totalBooks = books.length;
-    if (totalBooks > 0) {
+    if (booksCount > 0) {
       list.push({
-        text: isRTL ? `محرابك يحتوي الآن على ${totalBooks} كتاباً.` : `Your sanctuary now holds ${totalBooks} volumes.`,
+        text: isRTL ? `محرابك يحتوي الآن على ${booksCount} كتاباً.` : `Your sanctuary now holds ${booksCount} volumes.`,
         icon: <Library size={14} className="text-purple-400" />,
         color: 'border-purple-400/20 bg-purple-400/5'
       });
     }
 
     // 6. Total Time Stats
+    // Use a more stable dependency for total time if possible, or just keep it
     const totalSeconds = books.reduce((acc, b) => acc + b.timeSpentSeconds, 0);
     const totalHours = (totalSeconds / 3600).toFixed(1);
     if (parseFloat(totalHours) > 0) {
@@ -263,7 +263,7 @@ const App: React.FC = () => {
     });
 
     return list;
-  }, [habitData, totalTodayMinutes, lang, books]);
+  }, [habitData, totalTodayMinutes, lang, booksCount]);
 
   useEffect(() => {
     if (insights.length <= 1) return;
