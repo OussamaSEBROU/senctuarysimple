@@ -1,9 +1,8 @@
 
 // Version: 1.1.0 - Refined Header & Session Mode
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Language } from '../types';
-import type { Book, ChatMessage, Annotation } from '../types';
+import type { Language, Book, ChatMessage, Annotation } from '../types';
 import { translations } from '../i18n/translations';
 import { storageService } from '../services/storageService';
 import { pdfStorage } from '../services/pdfStorage';
@@ -34,6 +33,44 @@ interface ReaderProps {
   socket?: Socket | null;
   roomId?: string | null;
   roomData?: any;
+}
+
+interface RoomMember {
+  id: string;
+  name: string;
+  currentPage: number;
+  isMicActive?: boolean;
+  isHandRaised?: boolean;
+}
+
+interface VoiceSignalPayload {
+  from: string;
+  signal: any;
+}
+
+interface MemberMovedPayload {
+  id: string;
+  page: number;
+}
+
+interface MemberCursorPayload {
+  id: string;
+  cursor: { x: number, y: number };
+}
+
+interface NewReactionPayload {
+  id: string;
+  reaction: string;
+}
+
+interface MicStatusPayload {
+  id: string;
+  active: boolean;
+}
+
+interface HandRaisedPayload {
+  id: string;
+  raised: boolean;
 }
 
 type Tool = 'view' | 'highlight' | 'underline' | 'box' | 'note';
@@ -182,12 +219,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
     setupVoice();
 
-    socket.on("room-updated", (data: { members: any[] }) => {
+    socket.on("room-updated", (data: { members: RoomMember[] }) => {
       setMembers(data.members);
       
       // Handle new members for voice chat
       if (streamRef.current) {
-        data.members.forEach((member: any) => {
+        data.members.forEach((member: RoomMember) => {
           if (member.id !== userId && !peersRef.current[member.id]) {
             // Create peer for new member
             createPeer(member.id, streamRef.current!);
@@ -196,7 +233,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       }
     });
 
-    socket.on("voice-signal", ({ from, signal }: { from: string, signal: any }) => {
+    socket.on("voice-signal", ({ from, signal }: VoiceSignalPayload) => {
       const peer = peersRef.current[from];
       if (peer) {
         peer.signal(signal);
@@ -275,11 +312,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       setPeers(prev => ({ ...prev, [callerId]: peer }));
     };
 
-    socket.on("member-moved", ({ id, page }: { id: string, page: number }) => {
+    socket.on("member-moved", ({ id, page }: MemberMovedPayload) => {
       setMembers(prev => prev.map(m => m.id === id ? { ...m, currentPage: page } : m));
     });
 
-    socket.on("member-cursor", ({ id, cursor }: { id: string, cursor: { x: number, y: number } }) => {
+    socket.on("member-cursor", ({ id, cursor }: MemberCursorPayload) => {
       const member = members.find(m => m.id === id);
       if (member) {
         setMemberCursors(prev => ({ ...prev, [id]: { ...cursor, name: member.name } }));
@@ -427,7 +464,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
   }, [isZenMode]);
 
   const lastActivityRef = useRef<number>(0);
-  const handleUserActivity = React.useCallback(() => {
+  const handleUserActivity = useCallback(() => {
     if (!isZenMode) return;
     const now = Date.now();
     if (now - lastActivityRef.current < 100) return; // Throttle to 100ms
@@ -954,19 +991,19 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
           >
             <div className="flex items-center gap-2 md:gap-4 pointer-events-auto">
               {!roomId ? (
-                <button onClick={onBack} className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center bg-white/10 rounded-full text-white hover:bg-red-600 hover:text-white transition-all active:scale-95 shrink-0 shadow-lg">
-                  <ChevronLeft size={20} className={isRTL ? "rotate-180" : ""} />
+                <button onClick={onBack} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/60 hover:bg-white/10 active:scale-90 shrink-0">
+                  <ChevronLeft size={16} className={isRTL ? "rotate-180" : ""} />
                 </button>
               ) : (
-                <button onClick={onBack} className="flex items-center gap-2 px-4 py-2 md:px-6 md:py-3 bg-red-600/20 text-red-500 rounded-full hover:bg-red-600 hover:text-white transition-all group active:scale-95 shrink-0 border border-red-600/30">
-                  <PhoneOff size={16} className="md:size-6" />
-                  <span className="text-[10px] md:text-sm font-black uppercase tracking-widest">{isRTL ? 'مغادرة' : 'Leave'}</span>
+                <button onClick={onBack} className="flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2.5 bg-red-600/10 text-red-500 rounded-full hover:bg-red-600 hover:text-white transition-all group active:scale-95 shrink-0">
+                  <PhoneOff size={14} className="md:size-5" />
+                  <span className="text-[9px] md:text-xs font-black uppercase tracking-widest">{isRTL ? 'مغادرة' : 'Leave'}</span>
                 </button>
               )}
 
-              <div className="flex flex-col shrink-0 px-2">
+              <div className="flex flex-col shrink-0 px-1">
                 {!roomId ? (
-                  <h2 className="text-[10px] md:text-sm font-black text-white uppercase italic tracking-tighter truncate max-w-[100px] md:max-w-[220px] leading-none">
+                  <h2 className="text-[9px] md:text-xs font-black text-white uppercase italic tracking-tighter truncate max-w-[80px] md:max-w-[180px] leading-none">
                     {book.title}
                   </h2>
                 ) : (
@@ -983,24 +1020,24 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
               <div className="h-4 w-[1px] bg-white/10 mx-1 shrink-0" />
               
-              <button onClick={() => setIsArchiveOpen(true)} className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 active:scale-95 shrink-0">
-                <ListOrdered size={18} />
+              <button onClick={() => setIsArchiveOpen(true)} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 active:scale-90 shrink-0">
+                <ListOrdered size={16} />
               </button>
               
-              <button onClick={() => setIsNightMode(!isNightMode)} className={`w-10 h-10 md:w-12 md:h-12 flex items-center justify-center rounded-full transition-all active:scale-95 shrink-0 ${isNightMode ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
-                {isNightMode ? <Sun size={18} /> : <Moon size={18} />}
+              <button onClick={() => setIsNightMode(!isNightMode)} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all active:scale-90 shrink-0 ${isNightMode ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                {isNightMode ? <Sun size={16} /> : <Moon size={16} />}
               </button>
               
               {socket && roomId && (
                 <div className="flex items-center gap-1.5 ml-1 md:ml-4 border-l border-white/10 pl-1 md:pl-4 shrink-0">
                   {/* Raise Hand */}
-                  <button onClick={toggleHand} className={`w-10 h-10 md:w-12 md:h-12 flex items-center justify-center rounded-full transition-all relative shrink-0 ${isHandRaised ? 'bg-yellow-500 text-black shadow-[0_0_15px_rgba(234,179,8,0.4)]' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
-                    <Hand size={18} className={isHandRaised ? "animate-bounce" : ""} />
+                  <button onClick={toggleHand} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all relative shrink-0 ${isHandRaised ? 'bg-yellow-500 text-black shadow-[0_0_15px_rgba(234,179,8,0.4)]' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                    <Hand size={16} className={isHandRaised ? "animate-bounce" : ""} />
                   </button>
 
-                  <button onClick={() => setIsMembersListOpen(true)} className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 relative shrink-0">
-                    <Users size={18} />
-                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[8px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow-lg">
+                  <button onClick={() => setIsMembersListOpen(true)} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 relative shrink-0">
+                    <Users size={16} />
+                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[7px] font-black w-3.5 h-3.5 rounded-full flex items-center justify-center">
                       {members.length}
                     </span>
                   </button>
@@ -1028,12 +1065,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
               )}
             </div>
 
-            <div className="flex items-center gap-2 pointer-events-auto shrink-0">
-              <button onClick={() => setIsToolsOpen(!isToolsOpen)} className={`w-10 h-10 md:w-12 md:h-12 flex items-center justify-center rounded-full transition-all active:scale-95 shrink-0 ${isToolsOpen ? 'bg-white text-black shadow-xl' : 'bg-white/5 text-white/40'}`}>
-                <Palette size={18} />
+            <div className="flex items-center gap-1.5 pointer-events-auto shrink-0">
+              <button onClick={() => setIsToolsOpen(!isToolsOpen)} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all active:scale-90 shrink-0 ${isToolsOpen ? 'bg-white text-black shadow-xl' : 'bg-white/5 text-white/40'}`}>
+                <Palette size={16} />
               </button>
-              <button onClick={toggleZenMode} className={`w-10 h-10 md:w-12 md:h-12 flex items-center justify-center rounded-full border transition-all shrink-0 ${isZenMode ? 'bg-red-600 border-red-600 text-white' : 'bg-white/5 border-white/10 text-white/40'}`}>
-                <Maximize2 size={18} />
+              <button onClick={toggleZenMode} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full border transition-all shrink-0 ${isZenMode ? 'bg-red-600 border-red-600 text-white' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                <Maximize2 size={16} />
               </button>
             </div>
           </MotionHeader>
