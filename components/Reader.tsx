@@ -1,748 +1,1287 @@
+
+// Version: 1.1.0 - Refined Header & Session Mode
 import React, { useState, useEffect, useRef } from 'react';
-import { ViewState, Language, Insight } from './types';
-import type { Book, ShelfData } from './types';
-import { Layout } from './components/Layout';
-import { Shelf } from './components/Shelf';
-import { Reader } from './components/Reader';
-import { Dashboard } from './components/Dashboard';
-import { CelebrationOverlay } from './components/CelebrationOverlay';
-import { Onboarding } from './components/Onboarding';
-import { translations } from './i18n/translations';
-import { storageService } from './services/storageService';
-import { pdfStorage } from './services/pdfStorage';
-import { 
-  Plus, 
-  Library, 
-  X, 
-  Menu, 
-  Sparkles, 
-  Trash2, 
-  Loader2, 
-  BookOpen, 
-  Globe, 
-  LayoutDashboard,
-  Clock,
-  Star,
-  Upload,
-  Zap,
-  ShieldCheck,
-  BrainCircuit,
-  Mail,
-  Check
-} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Language } from '../types';
+import type { Book, ChatMessage, Annotation } from '../types';
+import { translations } from '../i18n/translations';
+import { storageService } from '../services/storageService';
+import { pdfStorage } from '../services/pdfStorage';
+import { 
+  ChevronLeft, ChevronRight, Maximize2, Highlighter, 
+  PenTool, MessageSquare, Trash2, X, MousePointer2, 
+  ListOrdered, Volume2, CloudLightning, Waves, 
+  Moon, Bird, Flame, VolumeX, Sparkles, Search, Droplets,
+  Edit3, Sun, Clock, BoxSelect, Palette, Check, LayoutGrid,
+  FileAudio, Users, Send, MessageCircle, Share2, Zap,
+  Mic, MicOff, Hand, Ghost, BookOpen,
+  PhoneOff, Video, VideoOff, MoreVertical, Monitor, ArrowLeft
+} from 'lucide-react';
+import { Socket } from 'socket.io-client';
+import Peer from 'simple-peer';
 
 declare const pdfjsLib: any;
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 const MotionDiv = motion.div as any;
-const MotionAside = motion.aside as any;
+const MotionHeader = motion.header as any;
 
-const App: React.FC = () => {
-  const [view, setView] = useState<ViewState>(ViewState.SHELF);
-  const [lang, setLang] = useState<Language>('ar');
-  const [books, setBooks] = useState<Book[]>([]);
-  const [shelves, setShelves] = useState<ShelfData[]>([]);
-  const [activeShelfId, setActiveShelfId] = useState<string>('default');
-  const [activeBookIndex, setActiveBookIndex] = useState(0); // رفع الحالة للتحكم في الإحصائيات العلوية
-  const [selectedBook, setSelectedBook] = useState<Book | null>(null);
-  const [isAddingBook, setIsAddingBook] = useState(false);
-  const [isAddingShelf, setIsAddingShelf] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isExtracting, setIsExtracting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [newBookTitle, setNewBookTitle] = useState('');
-  const [newBookAuthor, setNewBookAuthor] = useState('');
-  const [newShelfName, setNewShelfName] = useState('');
-  const [pendingFileData, setPendingFileData] = useState<ArrayBuffer | null>(null);
-  const [celebrationStar, setCelebrationStar] = useState<number | null>(null);
-  const [activeInsightIndex, setActiveInsightIndex] = useState(0);
-  const [showInsights, setShowInsights] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(false);
-  const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
-  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+interface ReaderProps {
+  book: Book;
+  lang: Language;
+  userId?: string;
+  onBack: () => void;
+  onStatsUpdate: (starReached?: number | null) => void;
+  socket?: Socket | null;
+  roomId?: string | null;
+  roomData?: any;
+}
 
-  useEffect(() => {
-    const onboardingSeen = localStorage.getItem('sanctuary_onboarding_seen');
-    const actualBooks = storageService.getBooks();
-    // Only show if never seen AND library is truly empty (new user)
-    if (!onboardingSeen && actualBooks.length === 0) {
-      setShowOnboarding(true);
-    }
-  }, []);
+type Tool = 'view' | 'highlight' | 'underline' | 'box' | 'note';
 
-  const handleOnboardingComplete = React.useCallback(() => {
-    localStorage.setItem('sanctuary_onboarding_seen', 'true');
-    setShowOnboarding(false);
-  }, []);
+const COLORS = [
+  { name: 'Yellow', hex: '#fbbf24' },
+  { name: 'Red', hex: '#ef4444' },
+  { name: 'Green', hex: '#22c55e' },
+  { name: 'Blue', hex: '#3b82f6' },
+  { name: 'Purple', hex: '#a855f7' }
+];
 
-  const confirmDeleteBook = React.useCallback(async () => {
-    if (!bookToDelete || deleteConfirmInput !== 'امسح من المحراب') return;
-    
-    await pdfStorage.deleteFile(bookToDelete.id);
-    storageService.deleteBook(bookToDelete.id);
-    
-    const updatedBooks = storageService.getBooks();
-    setBooks(updatedBooks);
-    setBookToDelete(null);
-    setDeleteConfirmInput('');
-    
-    // Reset index if needed
-    if (activeBookIndex >= updatedBooks.filter(b => b.shelfId === activeShelfId).length) {
-      setActiveBookIndex(Math.max(0, updatedBooks.filter(b => b.shelfId === activeShelfId).length - 1));
-    }
-  }, [bookToDelete, deleteConfirmInput, activeBookIndex, activeShelfId]);
+const SOUNDS = [
+  { id: 'none', icon: VolumeX, url: '' },
+  { id: 'rain', icon: CloudLightning, url: '/assets/sounds/rain.mp3' },
+  { id: 'sea', icon: Waves, url: '/assets/sounds/sea.mp3' },
+  { id: 'river', icon: Droplets, url: '/assets/sounds/river.mp3' },
+  { id: 'night', icon: Moon, url: '/assets/sounds/night.mp3' },
+  { id: 'birds', icon: Bird, url: '/assets/sounds/birds.mp3' },
+  { id: 'fire', icon: Flame, url: '/assets/sounds/fire.mp3' }
+];
 
-  useEffect(() => {
-    if (view === ViewState.SHELF) {
-      setShowInsights(true);
-      const timer = setTimeout(() => {
-        setShowInsights(false);
-      }, 45000);
-      return () => clearTimeout(timer);
-    } else {
-      setShowInsights(false);
-    }
-  }, [view]);
+const TOOL_ICONS = {
+  view: MousePointer2,
+  highlight: Highlighter,
+  underline: PenTool,
+  box: BoxSelect,
+  note: MessageSquare
+};
 
-  useEffect(() => {
-    const loadedBooks = storageService.getBooks();
-    const loadedShelves = storageService.getShelves();
-    setBooks(loadedBooks);
-    setShelves(loadedShelves);
-  }, []);
+export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpdate, socket, roomId, roomData }) => {
+  const [isZenMode, setIsZenMode] = useState(false);
+  const [isNightMode, setIsNightMode] = useState(false);
+  const [showControls, setShowControls] = useState(true);
+  const [pages, setPages] = useState<string[]>([]);
+  const [currentPage, setCurrentPage] = useState(book.lastPage || 0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [totalPages, setTotalPages] = useState(0);
+  
+  const [activeTool, setActiveTool] = useState<Tool>('view');
+  const [activeColor, setActiveColor] = useState(COLORS[0].hex);
+  const [annotations, setAnnotations] = useState<Annotation[]>(book.annotations || []);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [startPos, setStartPos] = useState({ x: 0, y: 0 });
+  const [currentRect, setCurrentRect] = useState<{ x: number, y: number, w: number, h: number } | null>(null);
+  
+  const [editingAnnoId, setEditingAnnoId] = useState<string | null>(null);
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const [isGoToPageOpen, setIsGoToPageOpen] = useState(false);
+  const [isSoundPickerOpen, setIsSoundPickerOpen] = useState(false);
+  const [isToolsOpen, setIsToolsOpen] = useState(false);
+  const [isThumbnailsOpen, setIsThumbnailsOpen] = useState(false);
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
+  const [pdfRequestSent, setPdfRequestSent] = useState(false);
+  const [activeSoundId, setActiveSoundId] = useState('none');
+  const [volume, setVolume] = useState(0.5);
+  const [customSoundName, setCustomSoundName] = useState('');
+  const [targetPageInput, setTargetPageInput] = useState('');
+  const [sessionSeconds, setSessionSeconds] = useState(0);
+  const [zoomScale, setZoomScale] = useState(1);
+  const [isPinching, setIsPinching] = useState(false);
+  const [direction, setDirection] = useState(0); 
+
+  // Collective Mode State
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [members, setMembers] = useState<any[]>([]);
+  const [memberCursors, setMemberCursors] = useState<Record<string, { x: number, y: number, name: string }>>({});
+  const [activeReactions, setActiveReactions] = useState<any[]>([]);
+  const [isMembersListOpen, setIsMembersListOpen] = useState(false);
+  const [isMicActive, setIsMicActive] = useState(false);
+  const [isSpeakerActive, setIsSpeakerActive] = useState(true);
+  const [isHandRaised, setIsHandRaised] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const [showCopySuccess, setShowCopySuccess] = useState(false);
+  const [speakingMembers, setSpeakingMembers] = useState<Set<string>>(new Set());
+  const [peers, setPeers] = useState<Record<string, Peer.Instance>>({});
+  const streamRef = useRef<MediaStream | null>(null);
+  const peersRef = useRef<Record<string, Peer.Instance>>({});
+  const isAdmin = socket && roomData?.adminId === userId;
+  
+  const initialPinchDistance = useRef<number | null>(null);
+  const initialScaleOnPinch = useRef<number>(1);
+  const timerRef = useRef<number | null>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  const controlsTimeoutRef = useRef<number | null>(null);
 
   const t = translations[lang];
-  const filteredBooks = React.useMemo(() => books.filter(b => b.shelfId === activeShelfId), [books, activeShelfId]);
-  const fontClass = lang === 'ar' ? 'font-ar' : 'font-en';
-
-  const habitData = React.useMemo(() => storageService.getHabitData(), [books]);
-  const habitStreak = habitData.streak;
-
-  const totalTodayMinutes = React.useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
-    return Math.floor(books.reduce((acc, b) => {
-      if (b.lastReadDate === today) return acc + (b.dailyTimeSeconds || 0);
-      return acc;
-    }, 0) / 60);
-  }, [books]);
-
-  const activeBookStats = React.useMemo(() => {
-    if (filteredBooks.length > 0 && filteredBooks[activeBookIndex]) {
-      const book = filteredBooks[activeBookIndex];
-      return {
-        minutes: Math.floor(book.timeSpentSeconds / 60),
-        stars: book.stars || 0
-      };
-    }
-    return { minutes: 0, stars: 0 };
-  }, [filteredBooks, activeBookIndex]);
-
-  const booksCount = books.length;
-  const insights = React.useMemo<Insight[]>(() => {
-    const list: Insight[] = [];
-    const isRTL = lang === 'ar';
-    const streak = habitData.streak;
-    
-    // 0. First Experience / Empty State (Strictly Exclusive)
-    if (booksCount === 0) {
-      list.push({
-        text: isRTL ? 'مرحباً بك .. في منصة المحراب تؤسس وعيك وتمركز ثقافتك كل يوم' : 'Welcome to the elite.. Here we craft awareness and reshape thought.',
-        icon: <Sparkles size={16} className="text-[#ff0000] drop-shadow-[0_0_8px_rgba(255,0,0,0.6)]" />,
-        color: 'border-[#ff0000]/40 bg-[#ff0000]/10 backdrop-blur-md shadow-[0_10px_30px_rgba(255,0,0,0.1)]',
-        isShining: true
-      });
-      list.push({
-        text: isRTL ? 'تابع تطور زادك الفكري والثقافي بإحصائيات دقيقة وراقب تطورك كل لحظة' : 'The 3% Rule: Slight daily improvement puts you at the top within a year.',
-        icon: <Zap size={16} className="text-emerald-400" />,
-        color: 'border-emerald-500/30 bg-emerald-500/5',
-        isShining: false
-      });
-      list.push({
-        text: isRTL ? 'اقتلع نفسك من دوامات التشتت والتفاهة، وزاحم كوكبة القُراء وطلاب العلم' : '"Reading is a ticket to elevate from the common to the elite." — Start now.',
-        icon: <BrainCircuit size={16} className="text-purple-400" />,
-        color: 'border-purple-500/20 bg-purple-500/5',
-        isShining: true
-      });
-      list.push({
-        text: isRTL ? 'قاعدة الـ 3%: كرر وردك الفكري كل يوم والتزم به في صروح العلم ' : 'The act of reading is not just information, it is a daily exercise for the wisdom muscle.',
-        icon: <BookOpen size={16} className="text-blue-400" />,
-        color: 'border-blue-500/20 bg-blue-500/5',
-        isShining: false
-      });
-      list.push({
-        text: isRTL ? 'اضغط على (+) لتضع أول لبنة في صرح ثقافتك السامقة.' : 'Click (+) to lay the first brick in the monument of your great culture.',
-        icon: <Plus size={18} className="text-white animate-pulse" />,
-        color: 'border-white/20 bg-white/5 shadow-xl',
-        isShining: true
-      });
-      
-      return list;
-    }
-
-    // 1. Rescue Alert (Only for active users)
-    if (totalTodayMinutes < 2) {
-      list.push({
-        text: isRTL ? 'تنبيه: السلسلة في خطر! تحتاج جلسة إنقاذ (دقيقتان) الآن.' : 'Streak at risk! You need a 2-min Rescue Session now.',
-        icon: <Zap size={14} className="text-orange-500 animate-pulse" />,
-        color: 'border-orange-500/30 bg-orange-500/5'
-      });
-    } else if (totalTodayMinutes < 15) {
-      list.push({
-        text: isRTL ? `تم الإنقاذ! اقرأ ${15 - totalTodayMinutes} دقائق إضافية للتقدم في مسار الـ 40 يوماً.` : `Rescue complete! Read ${15 - totalTodayMinutes} more mins to advance the 40-day path.`,
-        icon: <Check size={14} className="text-emerald-500" />,
-        color: 'border-emerald-500/30 bg-emerald-500/5'
-      });
-    }
-
-    // 2. Phase Info
-    let phaseName = '';
-    let phaseColor = '';
-    if (streak <= 10) {
-      phaseName = isRTL ? 'مرحلة المقاومة' : 'Resistance Phase';
-      phaseColor = 'text-red-500';
-    } else if (streak <= 21) {
-      phaseName = isRTL ? 'مرحلة التثبيت' : 'Installation Phase';
-      phaseColor = 'text-orange-500';
-    } else {
-      phaseName = isRTL ? 'مرحلة الانصهار' : 'Integration Phase';
-      phaseColor = 'text-emerald-500';
-    }
-    
-    list.push({
-      text: isRTL ? `أنت في ${phaseName} (اليوم ${streak}/40)` : `You are in ${phaseName} (Day ${streak}/40)`,
-      icon: <BrainCircuit size={14} className={phaseColor} />,
-      color: 'border-white/10 bg-white/5'
-    });
-
-    // 3. Shield Progress
-    if (habitData.shields < 3) {
-      const daysLeft = 7 - habitData.consecutiveFullDays;
-      list.push({
-        text: isRTL ? `اقرأ 15 دقيقة لمدة ${daysLeft} أيام إضافية للحصول على درع جديد.` : `Read 15 mins for ${daysLeft} more days to earn a new shield.`,
-        icon: <ShieldCheck size={14} className="text-emerald-400" />,
-        color: 'border-emerald-400/20 bg-emerald-400/5'
-      });
-    }
-
-    // 4. Shield Usage Advice
-    if (habitData.shields > 0) {
-      list.push({
-        text: isRTL ? `لديك ${habitData.shields} دروع. سيتم استخدامها تلقائياً إذا فاتك يوم.` : `You have ${habitData.shields} shields. They're used automatically if you miss a day.`,
-        icon: <ShieldCheck size={14} className="text-blue-500" />,
-        color: 'border-blue-500/30 bg-blue-500/5'
-      });
-    }
-
-    // 5. Library Stats
-    if (booksCount > 0) {
-      list.push({
-        text: isRTL ? `محرابك يحتوي الآن على ${booksCount} كتاباً.` : `Your sanctuary now holds ${booksCount} volumes.`,
-        icon: <Library size={14} className="text-purple-400" />,
-        color: 'border-purple-400/20 bg-purple-400/5'
-      });
-    }
-
-    // 6. Total Time Stats
-    // Use a more stable dependency for total time if possible, or just keep it
-    const totalSeconds = books.reduce((acc, b) => acc + b.timeSpentSeconds, 0);
-    const totalHours = (totalSeconds / 3600).toFixed(1);
-    if (parseFloat(totalHours) > 0) {
-      list.push({
-        text: isRTL ? `إجمالي وقت الحكمة المتراكم: ${totalHours} ساعة.` : `Total wisdom accumulated: ${totalHours} hours.`,
-        icon: <Clock size={14} className="text-yellow-400" />,
-        color: 'border-yellow-400/20 bg-yellow-400/5'
-      });
-    }
-
-    // 7. General Encouragement
-    list.push({
-      text: isRTL ? 'الاستمرارية هي مفتاح المعرفة العميقة.' : 'Consistency is the key to deep knowledge.',
-      icon: <Sparkles size={14} className="text-white/40" />,
-      color: 'border-white/5 bg-white/[0.02]'
-    });
-
-    return list;
-  }, [habitData, totalTodayMinutes, lang, booksCount]);
+  const isRTL = lang === 'ar';
+  const fontClass = isRTL ? 'font-ar' : 'font-en';
 
   useEffect(() => {
-    if (insights.length <= 1) return;
-    const timer = setInterval(() => {
-      setActiveInsightIndex(prev => (prev + 1) % insights.length);
-    }, 8000);
-    return () => clearInterval(timer);
-  }, [insights]);
+    if (!roomId) return;
+    const interval = setInterval(() => {
+      setSessionSeconds(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [roomId]);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type === "application/pdf") {
-      setIsExtracting(true);
-      setNewBookTitle(file.name.replace(/\.[^/.]+$/, ""));
+  const formatSessionTime = (totalSeconds: number) => {
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    return `${hrs > 0 ? hrs + ':' : ''}${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  useEffect(() => {
+    if (!socket || !roomId) return;
+
+    socket.on("pdf-requested", async ({ bookId, requesterId }: { bookId: string, requesterId: string }) => {
+      if (isAdmin && bookId === book.id) {
+        console.log("Admin: PDF requested by", requesterId);
+        const data = await pdfStorage.getFile(bookId);
+        if (data) {
+          socket.emit("send-pdf", { roomId, bookId, requesterId, pdfData: data });
+        }
+      }
+    });
+
+    socket.on("pdf-received", async ({ bookId, pdfData }: { bookId: string, pdfData: ArrayBuffer }) => {
+      if (bookId === book.id) {
+        console.log("Joiner: PDF received!");
+        await pdfStorage.saveFile(bookId, pdfData);
+        setPdfRequestSent(false); // Trigger reload
+      }
+    });
+
+    // Voice Chat Logic
+    const setupVoice = async () => {
       try {
-        const arrayBuffer = await file.arrayBuffer();
-        setPendingFileData(arrayBuffer);
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        streamRef.current = stream;
+        
+        // Mute by default if mic is not active
+        stream.getAudioTracks().forEach(track => track.enabled = isMicActive);
       } catch (err) {
-        alert("Error loading PDF");
-      } finally {
-        setIsExtracting(false);
+        console.error("Failed to get media stream", err);
+      }
+    };
+
+    setupVoice();
+
+    socket.on("room-updated", (data: { members: any[] }) => {
+      setMembers(data.members);
+      
+      // Handle new members for voice chat
+      if (streamRef.current) {
+        data.members.forEach((member: any) => {
+          if (member.id !== userId && !peersRef.current[member.id]) {
+            // Create peer for new member
+            createPeer(member.id, streamRef.current!);
+          }
+        });
+      }
+    });
+
+    socket.on("voice-signal", ({ from, signal }: { from: string, signal: any }) => {
+      const peer = peersRef.current[from];
+      if (peer) {
+        peer.signal(signal);
+      } else if (streamRef.current) {
+        // If we receive a signal from someone we don't have a peer for, create one
+        addPeer(signal, from, streamRef.current!);
+      }
+    });
+
+    const createPeer = (userToSignal: string, stream: MediaStream) => {
+      const combinedStream = new MediaStream([...stream.getTracks()]);
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(track => combinedStream.addTrack(track));
+      }
+
+      const peer = new Peer({
+        initiator: true,
+        trickle: false,
+        stream: combinedStream,
+      });
+
+      peer.on("signal", (signal: any) => {
+        socket.emit("send-voice-signal", { userToSignal, signal, from: userId });
+      });
+
+      peer.on("stream", (stream: MediaStream) => {
+        if (stream.getVideoTracks().length > 0) {
+          setRemoteScreenStream(stream);
+        }
+        
+        if (stream.getAudioTracks().length > 0) {
+          const audio = document.createElement("audio");
+          audio.srcObject = stream;
+          audio.autoplay = true;
+          audio.id = `audio-${userToSignal}`;
+          document.body.appendChild(audio);
+        }
+      });
+
+      peersRef.current[userToSignal] = peer;
+      setPeers(prev => ({ ...prev, [userToSignal]: peer }));
+    };
+
+    const addPeer = (incomingSignal: any, callerId: string, stream: MediaStream) => {
+      const combinedStream = new MediaStream([...stream.getTracks()]);
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(track => combinedStream.addTrack(track));
+      }
+
+      const peer = new Peer({
+        initiator: false,
+        trickle: false,
+        stream: combinedStream,
+      });
+
+      peer.on("signal", (signal: any) => {
+        socket.emit("return-voice-signal", { signal, to: callerId, from: userId });
+      });
+
+      peer.on("stream", (stream: MediaStream) => {
+        if (stream.getVideoTracks().length > 0) {
+          setRemoteScreenStream(stream);
+        }
+
+        if (stream.getAudioTracks().length > 0) {
+          const audio = document.createElement("audio");
+          audio.srcObject = stream;
+          audio.autoplay = true;
+          audio.id = `audio-${callerId}`;
+          document.body.appendChild(audio);
+        }
+      });
+
+      peer.signal(incomingSignal);
+      peersRef.current[callerId] = peer;
+      setPeers(prev => ({ ...prev, [callerId]: peer }));
+    };
+
+    socket.on("member-moved", ({ id, page }: { id: string, page: number }) => {
+      setMembers(prev => prev.map(m => m.id === id ? { ...m, currentPage: page } : m));
+    });
+
+    socket.on("member-cursor", ({ id, cursor }: { id: string, cursor: { x: number, y: number } }) => {
+      const member = members.find(m => m.id === id);
+      if (member) {
+        setMemberCursors(prev => ({ ...prev, [id]: { ...cursor, name: member.name } }));
+      }
+    });
+
+    socket.on("new-highlight", (highlight: Annotation) => {
+      setAnnotations(prev => [...prev, highlight]);
+    });
+
+    socket.on("new-chat", (msg: ChatMessage) => {
+      setChatMessages(prev => [...prev, msg]);
+    });
+
+    socket.on("new-reaction", ({ id, reaction }: { id: string, reaction: string }) => {
+      const member = members.find(m => m.id === id);
+      const newReaction = { id: Math.random(), emoji: reaction, name: member?.name || '...' };
+      setActiveReactions(prev => [...prev, newReaction]);
+      setTimeout(() => {
+        setActiveReactions(prev => prev.filter(r => r.id !== newReaction.id));
+      }, 3000);
+    });
+
+    socket.on("summoned", (page: number) => {
+      handlePageChange(page);
+    });
+
+    socket.on("mic-status-changed", ({ id, active }: { id: string, active: boolean }) => {
+      setSpeakingMembers(prev => {
+        const next = new Set(prev);
+        if (active) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    });
+
+    socket.on("hand-raised", ({ id, raised }: { id: string, raised: boolean }) => {
+      setMembers(prev => prev.map(m => m.id === id ? { ...m, isHandRaised: raised } : m));
+      if (raised) {
+        const member = members.find(m => m.id === id);
+        const newReaction = { id: Math.random(), emoji: '✋', name: member?.name || '...' };
+        setActiveReactions(prev => [...prev, newReaction]);
+        setTimeout(() => {
+          setActiveReactions(prev => prev.filter(r => r.id !== newReaction.id));
+        }, 5000);
+      }
+    });
+
+    return () => {
+      socket.off("room-updated");
+      socket.off("member-moved");
+      socket.off("member-cursor");
+      socket.off("new-highlight");
+      socket.off("new-chat");
+      socket.off("new-reaction");
+      socket.off("summoned");
+      socket.off("mic-status-changed");
+      socket.off("hand-raised");
+    };
+  }, [socket, roomId, members]);
+
+  const toggleHand = () => {
+    if (!socket || !roomId) return;
+    const newState = !isHandRaised;
+    setIsHandRaised(newState);
+    socket.emit("raise-hand", { roomId, raised: newState });
+  };
+
+  const toggleMic = () => {
+    if (!socket || !roomId) return;
+    const newState = !isMicActive;
+    setIsMicActive(newState);
+    
+    if (streamRef.current) {
+      streamRef.current.getAudioTracks().forEach(track => track.enabled = newState);
+    }
+    
+    socket.emit("toggle-mic", { roomId, active: newState });
+  };
+
+  const sendCursorUpdate = (clientX: number, clientY: number) => {
+    if (!socket || !roomId || activeTool !== 'view') return;
+    const { x, y } = getRelativeCoords(clientX, clientY);
+    socket.emit("cursor-move", { roomId, cursor: { x, y } });
+  };
+
+  const sendChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!socket || !roomId || !chatInput.trim()) return;
+    socket.emit("send-chat", { roomId, message: { text: chatInput, name: lang === 'ar' ? 'أنا' : 'Me' } });
+    setChatInput('');
+  };
+
+  const sendReaction = (emoji: string) => {
+    if (!socket || !roomId) return;
+    socket.emit("send-reaction", { roomId, reaction: emoji });
+  };
+
+  const summonAll = () => {
+    if (!socket || !roomId || !isAdmin) return;
+    socket.emit("summon-all", { roomId, page: currentPage });
+  };
+
+  const toggleZenMode = async () => {
+    if (!isZenMode) {
+      try {
+        const docEl = document.documentElement;
+        if (docEl.requestFullscreen) await docEl.requestFullscreen();
+      } catch (e) {}
+      setIsZenMode(true); setZoomScale(1); setIsToolsOpen(false); setIsThumbnailsOpen(false);
+    } else {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      setIsZenMode(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => { if (!document.fullscreenElement && isZenMode) setIsZenMode(false); };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, [isZenMode]);
+
+  useEffect(() => {
+    // Handle speaker toggle
+    const audios = document.querySelectorAll('audio[id^="audio-"]');
+    audios.forEach((audio: any) => {
+      audio.muted = !isSpeakerActive;
+    });
+  }, [isSpeakerActive]);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      Object.values(peersRef.current).forEach(peer => peer.destroy());
+      const audios = document.querySelectorAll('audio[id^="audio-"]');
+      audios.forEach(audio => audio.remove());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isZenMode) setShowControls(false);
+    else { setShowControls(true); if (controlsTimeoutRef.current) window.clearTimeout(controlsTimeoutRef.current); }
+  }, [isZenMode]);
+
+  const lastActivityRef = useRef<number>(0);
+  const handleUserActivity = React.useCallback(() => {
+    if (!isZenMode) return;
+    const now = Date.now();
+    if (now - lastActivityRef.current < 100) return; // Throttle to 100ms
+    lastActivityRef.current = now;
+
+    setShowControls(true);
+    if (controlsTimeoutRef.current) window.clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = window.setTimeout(() => { setShowControls(false); }, 4500);
+  }, [isZenMode]);
+
+  useEffect(() => {
+    const loadPdf = async () => {
+      const fileData = await pdfStorage.getFile(book.id);
+      if (!fileData) {
+        if (roomId && socket && !pdfRequestSent) {
+          console.log("PDF not found locally, requesting from room...");
+          setIsPdfLoading(true);
+          setPdfRequestSent(true);
+          socket.emit("request-pdf", { roomId, bookId: book.id, requesterId: userId });
+        } else if (!roomId) {
+          onBack();
+        }
+        return;
+      }
+      try {
+        if (!roomId) setIsLoading(true); // Only show loading for local files
+        const pdf = await pdfjsLib.getDocument({ data: fileData }).promise;
+        setTotalPages(pdf.numPages);
+        const tempPages = new Array(pdf.numPages).fill(null);
+        
+        const renderSinglePage = async (idx: number) => {
+          if (idx < 0 || idx >= pdf.numPages || tempPages[idx]) return;
+          try {
+            const p = await pdf.getPage(idx + 1);
+            const vp = p.getViewport({ scale: 1.5 });
+            const cv = document.createElement('canvas');
+            cv.height = vp.height; cv.width = vp.width;
+            await p.render({ canvasContext: cv.getContext('2d')!, viewport: vp }).promise;
+            tempPages[idx] = cv.toDataURL('image/jpeg', 0.8);
+            return tempPages[idx];
+          } catch (e) {
+            console.error("Error rendering page", idx, e);
+            return null;
+          }
+        };
+
+        // 1. Render current page immediately
+        await renderSinglePage(currentPage);
+        setPages([...tempPages]);
+        setIsLoading(false);
+        setIsPdfLoading(false);
+
+        // 2. Render neighbors for smooth transition
+        const neighbors = [currentPage - 1, currentPage + 1];
+        for (const n of neighbors) {
+          if (n >= 0 && n < pdf.numPages) {
+            await renderSinglePage(n);
+          }
+        }
+        setPages([...tempPages]);
+
+        // 3. Render the rest in chunks to avoid UI freezing and excessive re-renders
+        const loadRest = async () => {
+          const CHUNK_SIZE = 5;
+          for (let i = 0; i < pdf.numPages; i += CHUNK_SIZE) {
+            let chunkUpdated = false;
+            for (let j = i; j < i + CHUNK_SIZE && j < pdf.numPages; j++) {
+              if (!tempPages[j]) {
+                await renderSinglePage(j);
+                chunkUpdated = true;
+              }
+            }
+            if (chunkUpdated) {
+              setPages([...tempPages]);
+              // Yield to main thread
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+          }
+        };
+        loadRest();
+      } catch (err) {
+        setIsLoading(false);
+        setIsPdfLoading(false);
+      }
+    };
+    loadPdf();
+
+    timerRef.current = window.setInterval(() => {
+      setSessionSeconds(s => s + 1);
+      const { starReached } = storageService.updateBookStats(book.id, 1);
+      onStatsUpdate(starReached);
+    }, 1000);
+
+    return () => { 
+      if (timerRef.current) clearInterval(timerRef.current); 
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current); 
+    };
+  }, [book.id, pdfRequestSent]);
+
+  useEffect(() => { 
+    storageService.updateBookAnnotations(book.id, annotations); 
+    onStatsUpdate(); 
+  }, [annotations]);
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 0 && newPage < totalPages && newPage !== currentPage) {
+      setDirection(newPage > currentPage ? 1 : -1);
+      setZoomScale(1);
+      setCurrentPage(newPage);
+      storageService.updateBookPage(book.id, newPage);
+      if (socket && roomId) {
+        socket.emit("update-page", { roomId, page: newPage });
       }
     }
   };
 
-  const handleAddBook = async () => {
-    if (!newBookTitle || !pendingFileData) return;
-    const bookId = Math.random().toString(36).substr(2, 9);
-    await pdfStorage.saveFile(bookId, pendingFileData);
-    const newBook: Book = {
-      id: bookId, shelfId: activeShelfId, title: newBookTitle,
-      author: newBookAuthor || (lang === 'ar' ? 'مؤلف مجهول' : 'Unknown Scribe'),
-      cover: `https://picsum.photos/seed/${newBookTitle}/800/1200`,
-      content: "[VISUAL_PDF_MODE]", timeSpentSeconds: 0, dailyTimeSeconds: 0,
-      lastReadDate: new Date().toISOString().split('T')[0], stars: 0,
-      addedAt: Date.now(), lastPage: 0, annotations: []
-    };
-    const updated = [newBook, ...books];
-    setBooks(updated);
-    storageService.saveBooks(updated);
-    setNewBookTitle(''); setNewBookAuthor(''); setPendingFileData(null); setIsAddingBook(false);
-  };
+  const startScreenShare = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      screenStreamRef.current = stream;
+      setIsScreenSharing(true);
+      
+      // Add track to all existing peers
+      Object.values(peersRef.current).forEach(peer => {
+        stream.getTracks().forEach(track => {
+          peer.addTrack(track, stream);
+        });
+      });
 
-  const handleAddShelf = () => {
-    if (!newShelfName) return;
-    const newShelf: ShelfData = { id: Math.random().toString(36).substr(2, 9), name: newShelfName, color: '#ff0000' };
-    const updated = [...shelves, newShelf];
-    setShelves(updated);
-    storageService.saveShelves(updated);
-    setNewShelfName(''); setIsAddingShelf(false);
-  };
-
-  const handleDeleteShelf = (e: React.MouseEvent, shelfId: string) => {
-    e.stopPropagation();
-    if (shelfId === 'default') return;
-    const updatedShelves = shelves.filter(s => s.id !== shelfId);
-    setShelves(updatedShelves);
-    storageService.saveShelves(updatedShelves);
-    const updatedBooks = books.map(b => b.shelfId === shelfId ? { ...b, shelfId: 'default' } : b);
-    setBooks(updatedBooks);
-    storageService.saveBooks(updatedBooks);
-    if (activeShelfId === shelfId) setActiveShelfId('default');
-  };
-
-  const handleReaderBack = React.useCallback(() => {
-    setBooks(storageService.getBooks());
-    setView(ViewState.SHELF);
-  }, []);
-
-  const handleStatsUpdate = React.useCallback((starReached?: number | null) => {
-    setBooks(storageService.getBooks());
-    if (starReached) {
-      setCelebrationStar(starReached);
+      stream.getVideoTracks()[0].onended = () => stopScreenShare();
+    } catch (err) {
+      console.error("Error sharing screen:", err);
+      setIsScreenSharing(false);
     }
-  }, []);
+  };
 
-  const handleCelebrationComplete = React.useCallback(() => {
-    setCelebrationStar(null);
-  }, []);
+  const stopScreenShare = () => {
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach(track => track.stop());
+      screenStreamRef.current = null;
+    }
+    setIsScreenSharing(false);
+    // SimplePeer doesn't have a clean way to remove tracks without renegotiation in some versions,
+    // but stopping tracks will stop the stream on the other end.
+  };
+
+  const toggleScreenShare = () => {
+    if (isScreenSharing) {
+      stopScreenShare();
+    } else {
+      startScreenShare();
+    }
+  };
+
+  const jumpToPage = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pageNum = parseInt(targetPageInput, 10) - 1;
+    if (!isNaN(pageNum) && pageNum >= 0 && pageNum < totalPages) {
+      handlePageChange(pageNum);
+      setIsGoToPageOpen(false);
+      setTargetPageInput('');
+    }
+  };
+
+  const playSound = (sound: typeof SOUNDS[0]) => {
+    setActiveSoundId(sound.id);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      if (sound.id !== 'none') {
+        audioRef.current.src = sound.url;
+        audioRef.current.volume = volume;
+        audioRef.current.load();
+        audioRef.current.play().catch(e => {
+          console.error("Audio playback failed:", e);
+          // Fallback for some browsers: try playing after a short delay
+          setTimeout(() => {
+            audioRef.current?.play().catch(err => console.warn("Retry failed:", err));
+          }, 100);
+        });
+      }
+    }
+    setIsSoundPickerOpen(false);
+  };
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+    }
+  }, [volume]);
+
+  const handleCustomAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isMp3 = file.type === 'audio/mpeg' || file.name.toLowerCase().endsWith('.mp3');
+    if (!isMp3) {
+      alert(lang === 'ar' ? 'يرجى اختيار ملف MP3 فقط' : 'Please select an MP3 file only');
+      if (e.target) e.target.value = '';
+      return;
+    }
+
+    if (audioRef.current) {
+      const url = URL.createObjectURL(file);
+      setCustomSoundName(file.name);
+      setActiveSoundId('custom');
+      audioRef.current.src = url;
+      audioRef.current.load();
+      audioRef.current.play().catch(e => console.warn("Audio feedback:", e));
+      setIsSoundPickerOpen(false);
+    }
+  };
+
+  const getRelativeCoords = (clientX: number, clientY: number) => {
+    if (!pageRef.current) return { x: 0, y: 0 };
+    const rect = pageRef.current.getBoundingClientRect();
+    const rawX = ((clientX - rect.left) / rect.width) * 100;
+    const rawY = ((clientY - rect.top) / rect.height) * 100;
+    return { x: Math.max(0, Math.min(100, rawX)), y: Math.max(0, Math.min(100, rawY)) };
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    handleUserActivity();
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+      initialPinchDistance.current = dist; initialScaleOnPinch.current = zoomScale; setIsPinching(true); setIsDrawing(false); 
+      return;
+    }
+    if (activeTool !== 'view' && e.touches.length === 1) handleStart(e.touches[0].clientX, e.touches[0].clientY);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && initialPinchDistance.current !== null) {
+      const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+      const newScale = (dist / initialPinchDistance.current) * initialScaleOnPinch.current;
+      setZoomScale(Math.max(1, Math.min(newScale, 4))); return;
+    }
+    if (isDrawing && e.touches.length === 1) handleMove(e.touches[0].clientX, e.touches[0].clientY);
+  };
+
+  const handleStart = (clientX: number, clientY: number) => {
+    if (activeTool === 'view' || isPinching) return;
+    const { x, y } = getRelativeCoords(clientX, clientY);
+    if (activeTool === 'note') {
+      const newNote: Annotation = { id: Math.random().toString(36).substr(2, 9), type: 'note', pageIndex: currentPage, x, y, text: '', title: '', color: activeColor };
+      setAnnotations(prev => [...prev, newNote]); setEditingAnnoId(newNote.id); return;
+    }
+    setIsDrawing(true); setStartPos({ x, y }); setCurrentRect({ x, y, w: 0, h: 0 });
+  };
+
+  const handleMove = (clientX: number, clientY: number) => {
+    sendCursorUpdate(clientX, clientY);
+    if (!isDrawing || isPinching) return;
+    const { x: currentX, y: currentY } = getRelativeCoords(clientX, clientY);
+    setCurrentRect({ x: Math.min(startPos.x, currentX), y: Math.min(startPos.y, currentY), w: Math.abs(currentX - startPos.x), h: Math.abs(currentY - startPos.y) });
+  };
+
+  const handleEnd = () => {
+    if (isPinching) {
+      setIsPinching(false);
+      initialPinchDistance.current = null;
+    }
+    if (!isDrawing) return;
+    if (currentRect && currentRect.w > 0.5) {
+      const newAnno: Annotation = { 
+        id: Math.random().toString(36).substr(2, 9), 
+        type: activeTool as any, 
+        pageIndex: currentPage, 
+        x: currentRect.x, 
+        y: currentRect.y, 
+        width: currentRect.w, 
+        height: activeTool === 'underline' ? 0.8 : currentRect.h, 
+        color: activeColor, 
+        text: '', title: '' 
+      };
+      setAnnotations(prev => [...prev, newAnno]); 
+      setEditingAnnoId(newAnno.id);
+      if (socket && roomId) {
+        socket.emit("send-highlight", { roomId, highlight: newAnno });
+      }
+    }
+    setIsDrawing(false); setCurrentRect(null);
+  };
+
+  const updateEditingAnnotation = (updates: Partial<Annotation>) => {
+    if (!editingAnnoId) return;
+    setAnnotations(prev => prev.map(a => a.id === editingAnnoId ? { ...a, ...updates } : a));
+  };
+
+  const currentEditingAnno = annotations.find(a => a.id === editingAnnoId);
 
   return (
-    <Layout lang={lang}>
-      <div className={`flex flex-col h-screen-safe overflow-y-auto custom-scroll ${fontClass}`}>
-        {/* Sidebar Navigation - Fixed z-index and functionality */}
-        <AnimatePresence>
-          {isSidebarOpen && (
-            <React.Fragment key="sidebar-container">
-              <MotionDiv 
-                initial={{ opacity: 0 }} 
-                animate={{ opacity: 1 }} 
-                exit={{ opacity: 0 }} 
-                onClick={() => setIsSidebarOpen(false)} 
-                className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[4000] pointer-events-auto" 
-              />
-              <MotionAside
-                initial={{ x: lang === 'ar' ? '100%' : '-100%' }} 
-                animate={{ x: 0 }} 
-                exit={{ x: lang === 'ar' ? '100%' : '-100%' }}
-                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className={`fixed top-0 bottom-0 ${lang === 'ar' ? 'right-0' : 'left-0'} w-[85vw] md:w-80 bg-[#050f05] border-none z-[4100] flex flex-col shadow-2xl overflow-hidden pointer-events-auto`}
-              >
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,0,0,0.05),transparent_70%)] pointer-events-none" />
-                <div className="p-6 md:p-8 flex items-center justify-between border-b border-white/5 shrink-0 relative z-10">
-                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl md:rounded-2xl bg-[#ff0000] flex items-center justify-center shadow-[0_0_20px_rgba(255,0,0,0.3)]">
-                      <Sparkles size={16} className="text-white" />
-                    </div>
-                    <h2 className="text-lg md:text-xl font-black uppercase tracking-tighter text-white">{t.menu}</h2>
-                   </div>
-                   <button onClick={() => setIsSidebarOpen(false)} className="p-2 rounded-full bg-white/5 text-white/40 hover:text-white transition-all"><X size={18}/></button>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto custom-scroll p-4 md:p-6 space-y-8 md:space-y-10 relative z-10">
-                  <button onClick={() => { setView(ViewState.DASHBOARD); setIsSidebarOpen(false); }} className="w-full flex items-center gap-4 p-4 md:p-5 rounded-[1.5rem] md:rounded-[2rem] bg-[#ff0000]/10 border border-[#ff0000]/20 hover:bg-[#ff0000] hover:border-[#ff0000] transition-all group shadow-lg shadow-red-900/10">
-                    <div className="p-2 md:p-3 rounded-lg md:rounded-xl bg-white/10 group-hover:bg-white/20"><LayoutDashboard size={20} className="text-[#ff0000] group-hover:text-white" /></div>
-                    <div className="flex flex-col items-start"><span className="text-[10px] md:text-xs font-black uppercase tracking-widest group-hover:text-white">{t.dashboard}</span><span className="text-[8px] md:text-[9px] uppercase font-black opacity-30 group-hover:opacity-60 group-hover:text-white">{t.cognitiveMetrics}</span></div>
-                  </button>
-                  
-                  <section className="space-y-3 md:space-y-4">
-                    <div className="flex items-center gap-3 opacity-20 px-2"><Globe size={12} className="text-white" /><span className="text-[9px] font-black uppercase tracking-widest text-white">{t.language}</span></div>
-                    <div className="flex flex-col gap-2">
-                      {['ar', 'en'].map((l) => (
-                        <button key={l} onClick={() => { setLang(l as Language); setIsSidebarOpen(false); }} className={`w-full p-3 md:p-4 rounded-xl md:rounded-2xl border transition-all flex items-center justify-between ${lang === l ? 'bg-white text-black border-white shadow-xl' : 'bg-white/5 border-white/5 text-white/40 hover:bg-white/10 hover:border-white/10'}`}>
-                          <span className="text-xs md:text-sm font-bold uppercase">{l === 'ar' ? 'العربية' : 'English'}</span>
-                          {lang === l && <div className="w-1.5 h-1.5 rounded-full bg-red-600" />}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                  
-                  <section className="space-y-3 md:space-y-4">
-                    <div className="flex items-center gap-3 opacity-20 px-2"><BrainCircuit size={12} className="text-white" /><span className="text-[9px] font-black uppercase tracking-widest text-white">{lang === 'ar' ? 'طريقة عمل التطبيق' : 'How it Works'}</span></div>
-                    <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/5 space-y-3 shadow-inner">
-                      <p className="text-[10px] font-bold text-white/50 leading-relaxed uppercase tracking-tight">
-                        {lang === 'ar' 
-                          ? 'يعتمد التطبيق على مسار الـ 40 يوماً لبناء عادة القراءة العميقة، مقسمة لثلاث مراحل: المقاومة، التثبيت، والانصهار التام.' 
-                          : 'The app uses a 40-day path to build deep reading habits, divided into three phases: Resistance, Installation, and Integration.'}
-                      </p>
-                    </div>
-                  </section>
+    <div onMouseMove={handleUserActivity} onMouseDown={handleUserActivity}
+      className={`h-screen flex flex-col bg-black overflow-hidden relative transition-all duration-1000 ${isZenMode && !showControls ? 'cursor-none' : ''} ${fontClass}`} 
+      dir={isRTL ? 'rtl' : 'ltr'}
+    >
+      <audio ref={audioRef} loop hidden preload="auto" />
+      <input type="file" ref={audioInputRef} accept=".mp3,audio/mpeg" hidden onChange={handleCustomAudioUpload} />
 
-                  <section className="space-y-3 md:space-y-4">
-                    <div className="flex items-center gap-3 opacity-20 px-2"><ShieldCheck size={12} className="text-white" /><span className="text-[9px] font-black uppercase tracking-widest text-white">{lang === 'ar' ? 'سياسة التطبيق' : 'App Policy'}</span></div>
-                    <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/5 space-y-4 shadow-inner">
-                      <ul className="space-y-3">
-                        <li className="flex gap-3 text-[9px] font-black uppercase text-white/40 group">
-                          <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1 shrink-0 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
-                          <span className="group-hover:text-white/60 transition-colors">{lang === 'ar' ? 'جلسة الإنقاذ (2 دقيقة) تحمي السلسلة.' : 'Rescue Session (2 min) saves streak.'}</span>
-                        </li>
-                        <li className="flex gap-3 text-[9px] font-black uppercase text-white/40 group">
-                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1 shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                          <span className="group-hover:text-white/60 transition-colors">{lang === 'ar' ? 'درع كل 7 أيام أو عند النجمة 5.' : 'Shield every 7 days or at 5th star.'}</span>
-                        </li>
-                        <li className="flex gap-3 text-[9px] font-black uppercase text-white/40 group">
-                          <div className="w-1.5 h-1.5 rounded-full bg-red-600 mt-1 shrink-0 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
-                          <span className="group-hover:text-white/60 transition-colors">{lang === 'ar' ? 'الحد الأقصى للدروع هو 3.' : 'Maximum shields allowed is 3.'}</span>
-                        </li>
-                      </ul>
-                    </div>
-                  </section>
+      {/* Live Stream View for Guests */}
+      <AnimatePresence>
+        {remoteScreenStream && (
+          <MotionDiv 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 z-[1500] bg-black flex flex-col items-center justify-center pointer-events-auto"
+          >
+            <video 
+              autoPlay 
+              playsInline 
+              ref={video => { if (video) video.srcObject = remoteScreenStream; }} 
+              className="w-full h-full object-contain"
+            />
+            <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-red-600 px-6 py-2 rounded-full shadow-2xl">
+              <div className="w-2 h-2 rounded-full bg-white animate-ping" />
+              <span className="text-[10px] md:text-xs font-black uppercase tracking-[0.2em] text-white">
+                {isRTL ? 'بث مباشر من المشرف' : 'Live from Admin'}
+              </span>
+            </div>
+            <button 
+              onClick={() => setRemoteScreenStream(null)}
+              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white transition-all"
+            >
+              <X size={20} />
+            </button>
+          </MotionDiv>
+        )}
+      </AnimatePresence>
 
-                  <section className="space-y-4 pb-12">
-                    <div className="flex items-center justify-between px-2">
-                      <div className="flex items-center gap-3 opacity-20">
-                        <Library size={12} className="text-white" />
-                        <span className="text-[9px] font-black uppercase tracking-widest text-white">{t.collections}</span>
-                      </div>
-                      <button 
-                        onClick={() => setIsAddingShelf(true)} 
-                        className="p-2 bg-white/5 rounded-full text-white/40 hover:bg-red-600 hover:text-white transition-all active:scale-90 shadow-lg"
-                      >
-                        <Plus size={12}/>
-                      </button>
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      {shelves.map(shelf => (
-                        <div 
-                          key={shelf.id} 
-                          onClick={() => { setActiveShelfId(shelf.id); setActiveBookIndex(0); setView(ViewState.SHELF); setIsSidebarOpen(false); }} 
-                          className={`group w-full text-left px-5 py-4 rounded-2xl border transition-all text-[10px] md:text-xs font-bold flex items-center justify-between cursor-pointer ${activeShelfId === shelf.id ? 'bg-white/10 border-white/20 text-white shadow-xl' : 'bg-transparent border-transparent text-white/30 hover:bg-white/5'}`}
-                        >
-                          <div className="flex items-center gap-4 truncate">
-                            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${activeShelfId === shelf.id ? 'bg-red-600 shadow-[0_0_8px_#ff0000]' : 'bg-white/10'}`} />
-                            <span className="truncate">{shelf.name}</span>
-                          </div>
-                          {shelf.id !== 'default' && (
-                            <button 
-                              onClick={(e) => handleDeleteShelf(e, shelf.id)} 
-                              className="p-2 text-white/0 group-hover:text-white/20 hover:text-red-600 transition-all rounded-lg hover:bg-white/5"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-
-                  <section className="space-y-4 pb-12">
-                    <div className="flex items-center gap-3 opacity-20 px-2">
-                      <Mail size={12} className="text-white" />
-                      <span className="text-[9px] font-black uppercase tracking-widest text-white">
-                        {lang === 'ar' ? 'الدعم الفني' : 'Support'}
-                      </span>
-                    </div>
-                    <a 
-                      href={`mailto:oussama.sebrou@gmail.com?subject=${encodeURIComponent(lang === 'ar' ? 'استفسار رسمي: تطبيق المحراب للقراءة' : 'Official Inquiry: Sanctuary Reader Application')}&body=${encodeURIComponent(lang === 'ar' ? 'إلى فريق تطوير تطبيق المحراب،\n\nأكتب إليكم بصفتي مستخدماً للمنصة، وأود تقديم الملاحظات التالية لتعزيز التجربة المعرفية:\n\n[اكتب رسالتك هنا]\n\nمع خالص التقدير،\n[اسمك]' : 'To the Sanctuary Development Team,\n\nI am writing to you as a user of the platform, and I would like to provide the following feedback to enhance the cognitive experience:\n\n[Your Message Here]\n\nBest regards,\n[Your Name]')}`}
-                      className="w-full flex items-center gap-4 p-5 rounded-[2rem] bg-white/[0.03] border border-white/10 hover:bg-white/[0.08] hover:border-white/20 transition-all group shadow-xl"
-                    >
-                      <div className="p-3 rounded-2xl bg-red-600/10 group-hover:bg-red-600/20 transition-colors">
-                        <Mail size={20} className="text-red-600" />
-                      </div>
-                      <div className="flex flex-col items-start">
-                        <span className="text-[10px] md:text-xs font-black uppercase tracking-widest text-white group-hover:text-red-500 transition-colors">
-                          {lang === 'ar' ? 'فريق دعم المحراب' : 'Contact Us Sanctuary Team'}
-                        </span>
-                        <span className="text-[8px] md:text-[9px] uppercase font-black opacity-20 text-white">
-                          Official Support Channel
-                        </span>
-                      </div>
-                    </a>
-                  </section>
-
-                  <div className="pt-8 pb-12 text-center border-t border-white/5">
-                    <span className="text-[8px] font-black uppercase tracking-[0.4em] text-white/10">
-                      Sanctuary Reader v2.1.0
-                    </span>
+      <AnimatePresence>
+        {isChatOpen && (
+          <MotionDiv 
+            initial={{ x: isRTL ? -400 : 400 }} 
+            animate={{ x: 0 }} 
+            exit={{ x: isRTL ? -400 : 400 }} 
+            className={`fixed top-0 bottom-0 ${isRTL ? 'left-0' : 'right-0'} w-full max-w-[350px] bg-black/80 backdrop-blur-3xl border-l border-white/10 z-[3000] flex flex-col shadow-5xl`}
+          >
+            <div className="p-6 border-b border-white/5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <MessageCircle size={20} className="text-red-600" />
+                <h3 className="text-sm font-black uppercase tracking-widest text-white/60">{isRTL ? 'نقاش المحراب' : 'Sanctuary Chat'}</h3>
+              </div>
+              <button onClick={() => setIsChatOpen(false)} className="p-2 rounded-full bg-white/5 text-white/40 hover:text-white"><X size={18}/></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scroll">
+              {chatMessages.map(msg => (
+                <div key={msg.id} className={`flex flex-col ${msg.senderId === socket?.id ? 'items-end' : 'items-start'}`}>
+                  <span className="text-[8px] font-black text-white/20 uppercase mb-1">{msg.senderName}</span>
+                  <div className={`px-4 py-2.5 rounded-2xl text-[11px] font-bold ${msg.senderId === socket?.id ? 'bg-red-600 text-white rounded-tr-none' : 'bg-white/5 text-white/80 rounded-tl-none'}`}>
+                    {msg.text}
                   </div>
                 </div>
-              </MotionAside>
-            </React.Fragment>
+              ))}
+            </div>
+
+            <form onSubmit={sendChat} className="p-6 border-t border-white/5 flex gap-2">
+              <input 
+                type="text" 
+                value={chatInput} 
+                onChange={e => setChatInput(e.target.value)} 
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-red-600/50" 
+                placeholder={isRTL ? 'اكتب رسالتك...' : 'Type a message...'} 
+              />
+              <button type="submit" className="w-11 h-11 bg-red-600 rounded-xl flex items-center justify-center text-white shadow-lg active:scale-90 transition-transform">
+                <Send size={18} />
+              </button>
+            </form>
+          </MotionDiv>
+        )}
+
+        {isMembersListOpen && (
+          <MotionDiv 
+            initial={{ y: '100%' }} 
+            animate={{ y: 0 }} 
+            exit={{ y: '100%' }} 
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="fixed inset-0 z-[6000] bg-[#0f1721] flex flex-col pointer-events-auto"
+          >
+            {/* Telegram Header */}
+            <div className="p-4 md:p-6 flex items-center justify-between border-b border-white/5 bg-[#17212b]/50 backdrop-blur-md">
+              <div className="flex items-center gap-4">
+                <button onClick={() => setIsMembersListOpen(false)} className="p-2 text-white/60 hover:text-white transition-colors">
+                  <ArrowLeft size={24} />
+                </button>
+                <div className="flex flex-col">
+                  <h3 className="text-sm md:text-base font-bold text-white leading-tight">
+                    {roomData?.roomName || (isRTL ? 'مجموعة القراءة الجماعية' : 'Collective Reading Group')}
+                  </h3>
+                  <span className="text-[10px] md:text-xs text-blue-400 font-medium">
+                    {members.length} {isRTL ? 'مشاركين' : 'participants'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <button 
+                    onClick={toggleScreenShare}
+                    className={`p-2 transition-colors ${isScreenSharing ? 'text-red-500 animate-pulse' : 'text-white/60 hover:text-white'}`}
+                    title={isRTL ? 'بث مباشر للجلسة' : 'Live Stream Session'}
+                  >
+                    <Monitor size={20} />
+                  </button>
+                )}
+                <button className="p-2 text-white/60 hover:text-white transition-colors">
+                  <MoreVertical size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Telegram User List */}
+            <div className="flex-1 overflow-y-auto p-2 md:p-4 space-y-1 custom-scroll bg-[#0f1721]">
+              {members.map((m, idx) => (
+                <div key={m.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 transition-colors group">
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg ${
+                        idx % 3 === 0 ? 'bg-gradient-to-br from-blue-500 to-indigo-600' : 
+                        idx % 3 === 1 ? 'bg-gradient-to-br from-emerald-500 to-teal-600' : 
+                        'bg-gradient-to-br from-orange-500 to-red-600'
+                      }`}>
+                        {m.name.substring(0, 1)}
+                      </div>
+                      <div className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 bg-emerald-500 border-2 border-[#0f1721] rounded-full shadow-sm" />
+                    </div>
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-white">{m.name} {m.id === socket?.id && `(${isRTL ? 'أنت' : 'You'})`}</span>
+                        {roomData?.adminId === m.id && (
+                          <span className="text-[8px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 font-black uppercase rounded tracking-tighter">Admin</span>
+                        )}
+                        {m.isHandRaised && (
+                          <Hand size={12} className="text-yellow-500 animate-bounce" />
+                        )}
+                      </div>
+                      <span className="text-xs text-white/40 font-medium">
+                        {speakingMembers.has(m.id) ? (
+                          <span className="text-emerald-400">{isRTL ? 'يتحدث الآن...' : 'speaking now...'}</span>
+                        ) : (
+                          idx === 0 ? (isRTL ? 'كن مع الله ولا تبالي' : 'Be with God and don\'t care') :
+                          idx === 1 ? (isRTL ? 'إن الله لا يُعبد بالجهل..' : 'God is not worshipped in ignorance..') :
+                          (isRTL ? 'يستمع بتركيز' : 'listening intently')
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {speakingMembers.has(m.id) ? (
+                      <div className="flex gap-0.5 items-end h-4">
+                        <div className="w-1 bg-emerald-500 animate-[bounce_1s_infinite_0.1s]" style={{ height: '60%' }} />
+                        <div className="w-1 bg-emerald-500 animate-[bounce_1s_infinite_0.3s]" style={{ height: '100%' }} />
+                        <div className="w-1 bg-emerald-500 animate-[bounce_1s_infinite_0.2s]" style={{ height: '80%' }} />
+                      </div>
+                    ) : (
+                      <MicOff size={18} className="text-white/10" />
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Telegram Bottom Bar */}
+            <div className="p-6 md:p-10 bg-[#17212b] border-t border-white/5 flex items-center justify-around md:justify-center md:gap-16">
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={() => setIsSpeakerActive(!isSpeakerActive)}
+                  className={`w-12 h-12 md:w-16 md:h-16 rounded-full flex items-center justify-center transition-all ${isSpeakerActive ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' : 'bg-white/5 text-white/40'}`}
+                >
+                  {isSpeakerActive ? <Volume2 size={24} /> : <VolumeX size={24} />}
+                </button>
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{isRTL ? 'مكبر الصوت' : 'Speaker'}</span>
+              </div>
+
+              <div className="flex flex-col items-center gap-2 -mt-4">
+                <button 
+                  onClick={toggleMic}
+                  className={`w-20 h-20 md:w-28 md:h-28 rounded-full flex items-center justify-center transition-all relative ${isMicActive ? 'bg-emerald-500 text-white shadow-[0_0_40px_rgba(16,185,129,0.4)]' : 'bg-white/5 text-white/40 border-2 border-white/5'}`}
+                >
+                  {isMicActive ? <Mic size={36} className="animate-pulse" /> : <MicOff size={36} />}
+                  {isMicActive && (
+                    <div className="absolute inset-0 rounded-full border-4 border-emerald-400/30 animate-ping" />
+                  )}
+                </button>
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-2">{isMicActive ? (isRTL ? 'كتم' : 'Mute') : (isRTL ? 'تحدث' : 'Unmute')}</span>
+              </div>
+
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={() => { setIsChatOpen(true); setIsMembersListOpen(false); }}
+                  className="w-12 h-12 md:w-16 md:h-16 rounded-full bg-white/5 text-white/40 flex items-center justify-center hover:bg-white/10 transition-all"
+                >
+                  <MessageCircle size={24} />
+                </button>
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{isRTL ? 'الرسائل' : 'Message'}</span>
+              </div>
+
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={onBack}
+                  className="w-12 h-12 md:w-16 md:h-16 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg shadow-red-500/20 hover:bg-red-600 transition-all"
+                >
+                  <PhoneOff size={24} />
+                </button>
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{isRTL ? 'مغادرة' : 'Leave'}</span>
+              </div>
+            </div>
+          </MotionDiv>
+        )}
+
+        {isLoading && !remoteScreenStream && (
+          <MotionDiv key="loading-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[5000] bg-black flex flex-col items-center justify-center p-8 text-center pointer-events-none">
+            <div className="w-12 h-12 rounded-full border-2 border-white/5 border-t-red-600 animate-spin mb-6" />
+            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40">
+              {isPdfLoading ? (lang === 'ar' ? 'جاري استلام المخطوطة...' : 'Receiving Manuscript...') : t.loadingMessages[0]}
+            </h3>
+          </MotionDiv>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showControls && (
+          <MotionHeader initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} 
+            className="fixed top-0 left-0 right-0 p-2 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto"
+          >
+            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto">
+              {!roomId ? (
+                <button onClick={onBack} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/60 hover:bg-white/10 active:scale-90 shrink-0">
+                  <ChevronLeft size={16} className={isRTL ? "rotate-180" : ""} />
+                </button>
+              ) : (
+                <button onClick={onBack} className="flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2.5 bg-red-600/10 text-red-500 rounded-full hover:bg-red-600 hover:text-white transition-all group active:scale-95 shrink-0">
+                  <PhoneOff size={14} className="md:size-5" />
+                  <span className="text-[9px] md:text-xs font-black uppercase tracking-widest">{isRTL ? 'مغادرة' : 'Leave'}</span>
+                </button>
+              )}
+
+              <div className="flex flex-col shrink-0 px-1">
+                {!roomId ? (
+                  <h2 className="text-[9px] md:text-xs font-black text-white uppercase italic tracking-tighter truncate max-w-[80px] md:max-w-[180px] leading-none">
+                    {book.title}
+                  </h2>
+                ) : (
+                  <>
+                    <span className="text-[7px] md:text-[9px] font-black text-red-500 uppercase tracking-[0.2em] leading-none">
+                      {isRTL ? 'جلسة مباشرة' : 'LIVE SESSION'}
+                    </span>
+                    <span className="text-[6px] md:text-[8px] font-bold text-white/30 uppercase tracking-widest mt-0.5">
+                      {formatSessionTime(sessionSeconds)}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              <div className="h-4 w-[1px] bg-white/10 mx-1 shrink-0" />
+              
+              <button onClick={() => setIsArchiveOpen(true)} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 active:scale-90 shrink-0">
+                <ListOrdered size={16} />
+              </button>
+              
+              <button onClick={() => setIsNightMode(!isNightMode)} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all active:scale-90 shrink-0 ${isNightMode ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                {isNightMode ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+              
+              {socket && roomId && (
+                <div className="flex items-center gap-1.5 ml-1 md:ml-4 border-l border-white/10 pl-1 md:pl-4 shrink-0">
+                  {/* Raise Hand */}
+                  <button onClick={toggleHand} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all relative shrink-0 ${isHandRaised ? 'bg-yellow-500 text-black shadow-[0_0_15px_rgba(234,179,8,0.4)]' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                    <Hand size={16} className={isHandRaised ? "animate-bounce" : ""} />
+                  </button>
+
+                  <button onClick={() => setIsMembersListOpen(true)} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 relative shrink-0">
+                    <Users size={16} />
+                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[7px] font-black w-3.5 h-3.5 rounded-full flex items-center justify-center">
+                      {members.length}
+                    </span>
+                  </button>
+                  
+                  <button onClick={() => setIsChatOpen(!isChatOpen)} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all shrink-0 ${isChatOpen ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                    <MessageCircle size={16} />
+                  </button>
+                  
+                  <button onClick={toggleMic} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all relative shrink-0 ${isMicActive ? 'bg-emerald-600 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                    {isMicActive ? <Mic size={16} className="animate-pulse" /> : <MicOff size={16} />}
+                  </button>
+                  
+                  <button 
+                    onClick={() => {
+                      const url = `${window.location.origin}?room=${roomId}`;
+                      navigator.clipboard.writeText(url);
+                      setShowCopySuccess(true);
+                      setTimeout(() => setShowCopySuccess(false), 2000);
+                    }}
+                    className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all relative shrink-0 ${showCopySuccess ? 'bg-emerald-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+                  >
+                    {showCopySuccess ? <Check size={16} /> : <Share2 size={16} />}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1.5 pointer-events-auto shrink-0">
+              <button onClick={() => setIsToolsOpen(!isToolsOpen)} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all active:scale-90 shrink-0 ${isToolsOpen ? 'bg-white text-black shadow-xl' : 'bg-white/5 text-white/40'}`}>
+                <Palette size={16} />
+              </button>
+              <button onClick={toggleZenMode} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full border transition-all shrink-0 ${isZenMode ? 'bg-red-600 border-red-600 text-white' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                <Maximize2 size={16} />
+              </button>
+            </div>
+          </MotionHeader>
+        )}
+      </AnimatePresence>
+
+      <main className="flex-1 flex items-center justify-center bg-black relative overflow-hidden" ref={containerRef}>
+        <AnimatePresence>
+          {isThumbnailsOpen && (
+            <MotionDiv initial={{ x: -100, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -100, opacity: 0 }} className="fixed left-0 top-0 bottom-0 w-24 md:w-32 bg-black/80 backdrop-blur-2xl z-[1500] border-r border-white/5 flex flex-col pt-24 pb-8 overflow-y-auto no-scrollbar scroll-smooth">
+              {pages.map((p, idx) => (
+                <button key={idx} onClick={() => handlePageChange(idx)} className={`p-2 md:p-3 transition-all ${currentPage === idx ? 'scale-110 brightness-125' : 'opacity-40 hover:opacity-100 grayscale hover:grayscale-0'}`}>
+                  <div className={`aspect-[1/1.4] bg-white rounded-lg overflow-hidden border-2 transition-all ${currentPage === idx ? 'border-red-600 shadow-[0_0_15px_rgba(255,0,0,0.5)]' : 'border-transparent'}`}>
+                    {p && <img src={p} className="w-full h-full object-cover" alt={`p${idx}`} />}
+                    <div className="absolute bottom-1 right-2 bg-black/60 px-1 rounded text-[7px] font-bold text-white">{idx+1}</div>
+                  </div>
+                </button>
+              ))}
+            </MotionDiv>
           )}
         </AnimatePresence>
 
-        {/* Global Fixed Controls - Elevated z-index to ensure visibility and clickability */}
-        <div className="fixed top-0 left-0 right-0 z-[3000] p-3 md:p-8 pointer-events-none flex justify-between items-center">
-          <button 
-            onClick={() => setIsSidebarOpen(true)} 
-            className="p-3 md:p-5 rounded-full bg-black/60 backdrop-blur-2xl border border-white/10 pointer-events-auto hover:bg-[#ff0000] hover:border-[#ff0000] transition-all shadow-2xl group active:scale-95 z-[3001]"
-          >
-            <Menu size={18} className="group-hover:text-white text-white/40 md:size-6"/>
-          </button>
-          
-          {view === ViewState.SHELF && (
-            <div className="flex flex-row items-center gap-1.5 md:gap-3 pointer-events-auto max-w-[80vw] justify-end">
-              <MotionDiv initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-1.5 md:gap-3 bg-black/60 backdrop-blur-xl px-3 py-2 md:px-6 md:py-3.5 rounded-full border border-[#ff0000]/30 shadow-xl shrink-0">
-                <Clock size={14} className="text-[#ff0000] animate-pulse md:size-4" />
-                <div className="flex flex-col items-start leading-none">
-                  <span className="text-[6px] md:text-[7px] font-black uppercase tracking-widest opacity-30 mb-0.5">{t.todayFocus}</span>
-                  <span className="text-[9px] md:text-[11px] font-black text-[#ff0000]">{totalTodayMinutes}{lang === 'ar' ? 'د' : 'm'}</span>
-                </div>
-              </MotionDiv>
-              
-              {habitStreak > 0 && (
-                <MotionDiv initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-1.5 md:gap-3 bg-black/60 backdrop-blur-xl px-3 py-2 md:px-6 md:py-3.5 rounded-full border border-orange-500/30 shadow-xl shrink-0">
-                  <Zap size={14} className="text-orange-500 md:size-4" />
-                  <div className="flex flex-col items-start leading-none">
-                    <span className="text-[6px] md:text-[7px] font-black uppercase tracking-widest opacity-30 mb-0.5">{lang === 'ar' ? 'الاستمرارية' : 'Streak'}</span>
-                    <span className="text-[9px] md:text-[11px] font-black text-orange-500">{habitStreak}{lang === 'ar' ? 'ي' : 'd'}</span>
-                  </div>
-                </MotionDiv>
-              )}
-
-              <button onClick={() => setIsAddingBook(true)} className="px-4 md:px-8 py-2.5 md:py-4 rounded-full bg-white text-black text-[8px] md:text-[11px] font-black uppercase tracking-[0.1em] md:tracking-[0.3em] shadow-2xl hover:bg-[#ff0000] hover:text-white transition-all flex items-center gap-1.5 active:scale-95 shrink-0">
-                <Plus size={12} className="md:size-3.5" />{lang === 'ar' ? 'إضافة' : 'Add'}
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Main Content View Switcher */}
-        <div className="flex-1 relative overflow-hidden flex flex-col">
-          <AnimatePresence mode="wait">
-            {view === ViewState.SHELF && (
-              <MotionDiv key="shelf" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex flex-col relative">
-                <header className="flex flex-col items-center text-center pt-20 md:pt-4 pb-2 md:pb-1 shrink-0 overflow-visible">
-                  <h1 className="text-[clamp(2.5rem,6vw,5rem)] font-black text-white uppercase big-title-white tracking-tighter px-4 leading-[1.0] text-center w-full max-w-full drop-shadow-2xl">{t.title}</h1>
-                  <p className="shining-text text-[11px] md:text-xs font-bold mt-2 md:mt-1 px-8 md:px-12 max-w-2xl tracking-[0.4em] leading-relaxed opacity-90 italic">{t.philosophy}</p>
-                  
-                  {/* Book Specific Stats in Header - Linked to active index */}
-                  <div className="mt-3 md:mt-2 flex items-center gap-3 md:gap-8 bg-black/40 backdrop-blur-3xl px-4 md:px-8 py-1.5 md:py-2 rounded-full border border-white/10 shadow-3xl relative overflow-hidden group">
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-shimmer" />
-                    <MotionDiv key={`min-${activeBookIndex}`} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center relative z-10">
-                      <div className="flex items-center gap-1.5 md:gap-2">
-                        <Clock size={10} className="text-[#ff0000] md:size-3" />
-                        <span className="text-xs md:text-lg font-black text-white">{activeBookStats.minutes}{lang === 'ar' ? 'د' : 'm'}</span>
-                      </div>
-                      <span className="text-[6px] md:text-[8px] font-black uppercase tracking-widest opacity-20">{lang === 'ar' ? 'دقائق الكتاب' : 'Book Minutes'}</span>
-                    </MotionDiv>
-                    <div className="w-[1px] h-4 md:h-6 bg-white/10 relative z-10" />
-                    <MotionDiv key={`star-${activeBookIndex}`} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center relative z-10">
-                      <div className="flex items-center gap-1.5 md:gap-2">
-                        <Star size={10} className="text-[#ff0000] fill-[#ff0000] md:size-3" />
-                        <span className="text-xs md:text-lg font-black text-white">{activeBookStats.stars}</span>
-                      </div>
-                      <span className="text-[6px] md:text-[8px] font-black uppercase tracking-widest opacity-20">{t.stars}</span>
-                    </MotionDiv>
-                    {activeBookStats.stars > 0 && (
-                      <>
-                        <div className="w-[1px] h-4 md:h-6 bg-white/10 relative z-10" />
-                        <MotionDiv initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="flex flex-col items-center relative z-10">
-                          <div className="flex items-center gap-1.5 md:gap-2">
-                            <Sparkles size={10} className="text-yellow-500 md:size-3" />
-                            <span className="text-[9px] md:text-xs font-black text-white uppercase tracking-tighter">{t.badges[activeBookStats.stars - 1]}</span>
-                          </div>
-                          <span className="text-[6px] md:text-[8px] font-black uppercase tracking-widest opacity-20">{lang === 'ar' ? 'الوسام الحالي' : 'Current Badge'}</span>
-                        </MotionDiv>
-                      </>
-                    )}
-                  </div>
-                </header>
-
-                {/* Habit Insights Overlay - Moved here as per user request */}
-                <div className="mt-4 mb-2 flex justify-center px-6 pointer-events-none min-h-[40px]">
-                  <AnimatePresence mode="wait">
-                    {showInsights && insights.length > 0 && (
-                      <MotionDiv
-                        key={activeInsightIndex}
-                        initial={{ y: 20, opacity: 0, rotateX: -45, scale: 0.9 }}
-                        animate={{ y: 0, opacity: 0.9, rotateX: 0, scale: 1 }}
-                        exit={{ y: -20, opacity: 0, rotateX: 45, scale: 0.9 }}
-                        transition={{ type: "spring", damping: 15, stiffness: 100 }}
-                        className={`flex items-center gap-2 px-5 py-3 rounded-full border border-white/10 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] pointer-events-auto transition-all duration-700 ${insights[activeInsightIndex % insights.length].color}`}
-                        style={{ perspective: '1000px' }}
-                      >
-                        <div className="shrink-0 scale-90 md:scale-100">
-                          {insights[activeInsightIndex % insights.length].icon}
-                        </div>
-                        <span className={`text-[9px] md:text-[11px] font-black uppercase tracking-[0.1em] text-white whitespace-nowrap ${insights[activeInsightIndex % insights.length].isShining ? 'shining-text' : ''}`}>
-                          {insights[activeInsightIndex % insights.length].text}
-                        </span>
-                      </MotionDiv>
-                    )}
-                  </AnimatePresence>
-                </div>
-                
-                <div className="flex-1 flex flex-col justify-center items-center pb-12 md:pb-20">
-                  <Shelf 
-                    books={filteredBooks} 
-                    lang={lang} 
-                    activeIndex={activeBookIndex}
-                    onActiveIndexChange={setActiveBookIndex}
-                    onSelectBook={(b) => { setSelectedBook(b); setView(ViewState.READER); }} 
-                    onAddBook={() => setIsAddingBook(true)} 
-                    onDeleteBook={(b) => setBookToDelete(b)}
-                  />
-                </div>
-                <div className="absolute bottom-4 left-0 right-0 text-center pointer-events-none opacity-5">
-                  <span className="text-[8px] md:text-[9px] font-black uppercase tracking-[0.6em] text-white">Developed By Oussama SEBROU</span>
-                </div>
-              </MotionDiv>
-            )}
-            {view === ViewState.DASHBOARD && (
-              <MotionDiv 
-                key="dashboard" 
-                initial={{ opacity: 0 }} 
-                animate={{ opacity: 1 }} 
-                exit={{ opacity: 0 }} 
-                className="fixed inset-0 z-[4000] bg-[#020502] overflow-y-auto custom-scroll flex flex-col"
-              >
-                <Dashboard books={books} shelves={shelves} lang={lang} onBack={() => setView(ViewState.SHELF)} />
-              </MotionDiv>
-            )}
-            {view === ViewState.READER && selectedBook && (
-              <MotionDiv key="reader" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 z-[5000]">
-                <Reader 
-                  book={selectedBook} 
-                  lang={lang} 
-                  onBack={handleReaderBack} 
-                  onStatsUpdate={handleStatsUpdate} 
-                />
-              </MotionDiv>
-            )}
-          </AnimatePresence>
-        </div>
-
-
-        {/* Overlay Modals */}
-        <AnimatePresence>
-          {showOnboarding && (
-            <Onboarding lang={lang} onComplete={handleOnboardingComplete} />
-          )}
-          {isAddingBook && (
-            <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[6000] flex items-center justify-center p-0 md:p-6 bg-black/98 backdrop-blur-3xl">
-              <MotionDiv initial={{ scale: 0.95, y: 30 }} animate={{ scale: 1, y: 0 }} className="bg-[#0b140b] border border-white/5 p-8 md:p-12 rounded-none md:rounded-[4rem] w-full max-w-xl min-h-screen md:min-h-0 shadow-2xl relative flex flex-col justify-center">
-                <button onClick={() => setIsAddingBook(false)} className="absolute top-6 right-6 md:top-10 md:right-10 p-2 rounded-full bg-white/5 text-white/20 hover:text-white transition-colors"><X size={20} className="md:size-6" /></button>
-                <h2 className="text-xl md:text-3xl font-black mb-8 md:mb-12 text-white uppercase italic flex items-center gap-4 md:gap-5 leading-none"><BookOpen size={32} className="text-[#ff0000] md:size-11" /> {t.newIntake}</h2>
-                <div className="space-y-6 md:space-y-8">
-                  <div onClick={() => !isExtracting && fileInputRef.current?.click()} className="w-full aspect-video border-2 border-dashed border-white/10 rounded-[2rem] md:rounded-[3rem] flex flex-col items-center justify-center gap-4 md:gap-6 cursor-pointer hover:border-[#ff0000]/30 transition-all bg-white/5 group">
-                    <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".pdf" />
-                    {isExtracting ? <div className="animate-spin text-[#ff0000]"><Loader2 size={32} className="md:size-10" /></div> : <><div className="p-4 md:p-6 bg-white/5 rounded-full group-hover:bg-[#ff0000] group-hover:text-white transition-all"><Upload size={24} className="text-white/20 md:size-10" /></div><span className="text-[9px] md:text-[11px] uppercase font-black opacity-30 tracking-[0.2em] md:tracking-[0.3em]">{pendingFileData ? newBookTitle : t.uploadHint}</span></>}
-                  </div>
-                  <div className="grid gap-3 md:gap-4">
-                    <input type="text" value={newBookTitle} onChange={e => setNewBookTitle(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl md:rounded-2xl p-4 md:p-6 text-xs md:text-sm font-bold text-white outline-none focus:border-[#ff0000]/50" placeholder={t.bookTitle} />
-                    <input type="text" value={newBookAuthor} onChange={e => setNewBookAuthor(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl md:rounded-2xl p-4 md:p-6 text-xs md:text-sm font-bold text-white outline-none focus:border-[#ff0000]/50" placeholder={t.author} />
-                  </div>
-                  <button onClick={handleAddBook} disabled={!newBookTitle || !pendingFileData} className="w-full bg-white text-black py-4 md:py-6 rounded-[1.5rem] md:rounded-[2rem] font-black text-[10px] md:text-xs uppercase shadow-2xl hover:bg-[#ff0000] hover:text-white transition-all tracking-[0.3em] md:tracking-[0.5em]">{t.save}</button>
-                </div>
-              </MotionDiv>
-            </MotionDiv>
-          )}
-
-          {isAddingShelf && (
-            <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[6000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-2xl">
-              <MotionDiv initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-[#0b140b] border border-white/10 p-10 md:p-12 rounded-[2.5rem] md:rounded-[4rem] w-full max-w-md shadow-2xl text-center">
-                <h3 className="text-2xl md:text-3xl font-black uppercase italic text-white mb-8 md:mb-10">{lang === 'ar' ? 'إنشاء رف' : 'New Shelf'}</h3>
-                <input autoFocus type="text" value={newShelfName} onChange={e => setNewShelfName(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl md:rounded-2xl p-4 md:p-6 text-xs md:text-sm font-bold text-white outline-none mb-8 md:mb-10 focus:border-[#ff0000]/50" placeholder={lang === 'ar' ? 'اسم الرف...' : 'Shelf Name...'} />
-                <button onClick={handleAddShelf} className="w-full bg-[#ff0000] py-4 md:py-6 rounded-[1.5rem] md:rounded-[2rem] font-black text-[10px] md:text-xs uppercase shadow-2xl hover:scale-105 transition-transform text-white tracking-[0.3em] md:tracking-[0.4em]">{t.establish}</button>
-              </MotionDiv>
-            </MotionDiv>
-          )}
-
-          {celebrationStar && (
-            <CelebrationOverlay 
-              starCount={celebrationStar} 
-              lang={lang} 
-              onComplete={handleCelebrationComplete} 
-            />
-          )}
-
-          {bookToDelete && (
-            <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[7000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl">
-              <MotionDiv initial={{ scale: 0.9, y: 40 }} animate={{ scale: 1, y: 0 }} className="bg-[#0b140b] border border-white/10 p-10 md:p-14 rounded-[4rem] w-full max-w-lg shadow-[0_30px_100px_rgba(255,0,0,0.15)] relative text-center overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-b from-red-600/5 to-transparent pointer-events-none" />
-                
-                <div className="relative z-10">
-                  <div className="w-24 h-24 rounded-full bg-red-600/10 flex items-center justify-center mx-auto mb-8 border border-red-600/20 shadow-[0_0_40px_rgba(255,0,0,0.1)]">
-                    <Trash2 className="text-red-600" size={40} />
-                  </div>
-                  
-                  <h2 className="text-3xl md:text-4xl font-black text-white uppercase tracking-tighter italic mb-4">
-                    {lang === 'ar' ? 'هل أنت متأكد؟' : 'Are you sure?'}
-                  </h2>
-                  
-                  <p className="text-sm md:text-base text-white/60 font-bold leading-relaxed mb-8">
-                    {lang === 'ar' 
-                      ? `أنت على وشك حذف "${bookToDelete.title}". سيتم مسح جميع ملاحظاتك وتعديلاتك وإحصائيات القراءة لهذا الكتاب نهائياً.` 
-                      : `You are about to delete "${bookToDelete.title}". All your notes, annotations, and reading stats for this book will be permanently erased.`}
-                  </p>
-                  
-                  <div className="space-y-6">
-                    <div className="space-y-3">
-                      <p className="text-[10px] text-red-600/60 uppercase font-black tracking-widest">
-                        {lang === 'ar' ? 'اكتب العبارة التالية للتأكيد:' : 'Type the following phrase to confirm:'}
+        {!isLoading && (
+          <div className={`relative w-full h-full flex items-center justify-center overflow-hidden ${isZenMode ? 'p-0' : 'p-6'}`}>
+            <MotionDiv 
+              ref={pageRef} 
+              drag={activeTool === 'view' ? "x" : false}
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={0.15}
+              onDragEnd={(e: any, info: any) => {
+                if (activeTool === 'view' && zoomScale === 1) {
+                  const threshold = 50; 
+                  if (info.offset.x < -threshold) handlePageChange(currentPage + 1);
+                  else if (info.offset.x > threshold) handlePageChange(currentPage - 1);
+                }
+              }}
+              onMouseDown={(e:any) => handleStart(e.clientX, e.clientY)} 
+              onMouseMove={(e:any) => handleMove(e.clientX, e.clientY)} 
+              onMouseUp={handleEnd} 
+              onTouchStart={handleTouchStart} 
+              onTouchMove={handleTouchMove} 
+              onTouchEnd={handleEnd} 
+              animate={{ scale: zoomScale }} 
+              className={`relative shadow-[0_0_100px_rgba(0,0,0,1)] overflow-hidden touch-none will-change-transform ${isZenMode ? 'h-full w-full rounded-none' : 'max-h-[85vh] w-auto aspect-[1/1.41] rounded-2xl md:rounded-3xl'}`} 
+              style={{ backgroundColor: isNightMode ? '#000000' : '#ffffff', transformOrigin: 'center center', userSelect: 'none' }}
+            >
+              <AnimatePresence mode="wait">
+                <MotionDiv
+                  key={currentPage}
+                  initial={{ x: direction * (isRTL ? -40 : 40), opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  exit={{ x: direction * (isRTL ? 40 : -40), opacity: 0 }}
+                  transition={{ duration: 0.12, ease: "easeOut" }}
+                  className="w-full h-full flex items-center justify-center bg-transparent"
+                >
+                  {pages[currentPage] ? (
+                    <img src={pages[currentPage]} className="w-full h-full object-contain pointer-events-none select-none" style={{ filter: isNightMode ? 'invert(1) hue-rotate(180deg)' : 'none' }} alt={`Page ${currentPage + 1}`} />
+                  ) : roomId && !isAdmin && (
+                    <div className="flex flex-col items-center gap-4 text-center p-8">
+                      <div className="w-12 h-12 rounded-full border-2 border-white/5 border-t-red-600 animate-spin mb-2" />
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
+                        {isRTL ? 'بانتظار بث المشرف أو وصول المخطوطة...' : 'Waiting for admin stream or manuscript...'}
                       </p>
-                      <p className="text-lg font-black text-white italic tracking-tighter">امسح من المحراب</p>
-                      <input 
-                        type="text" 
-                        value={deleteConfirmInput} 
-                        onChange={(e) => setDeleteConfirmInput(e.target.value)} 
-                        className="w-full bg-white/[0.03] border border-white/10 rounded-3xl px-8 py-5 text-white text-center focus:outline-none focus:border-red-600/50 transition-all font-bold text-lg" 
-                        placeholder="..."
-                      />
                     </div>
-                    
-                    <div className="flex flex-col md:flex-row gap-4">
-                      <button 
-                        onClick={() => { setBookToDelete(null); setDeleteConfirmInput(''); }} 
-                        className="flex-1 bg-white/5 text-white/40 py-5 rounded-[2rem] font-black text-xs uppercase tracking-[0.3em] hover:bg-white/10 hover:text-white transition-all"
-                      >
-                        {lang === 'ar' ? 'تراجع' : 'Cancel'}
-                      </button>
-                      <button 
-                        onClick={confirmDeleteBook}
-                        disabled={deleteConfirmInput !== 'امسح من المحراب'}
-                        className={`flex-1 py-5 rounded-[2rem] font-black text-xs uppercase tracking-[0.3em] transition-all shadow-2xl ${deleteConfirmInput === 'امسح من المحراب' ? 'bg-red-600 text-white hover:bg-red-700 active:scale-95' : 'bg-white/5 text-white/10 cursor-not-allowed'}`}
-                      >
-                        {lang === 'ar' ? 'تأكيد الحذف' : 'Confirm Deletion'}
-                      </button>
-                    </div>
+                  )}
+                </MotionDiv>
+              </AnimatePresence>
+              
+              <div className="absolute inset-0 pointer-events-none">
+                {/* Ghost Cursors */}
+                {Object.entries(memberCursors).map(([id, cursor]) => (
+                  <MotionDiv
+                    key={id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1, x: `${cursor.x}%`, y: `${cursor.y}%` }}
+                    className="absolute z-50 pointer-events-none"
+                    style={{ left: 0, top: 0 }}
+                  >
+                    <Ghost size={14} className="text-red-600/60" />
+                    <span className="absolute left-4 top-0 bg-black/60 text-[7px] font-black text-white px-1.5 py-0.5 rounded-full whitespace-nowrap">{cursor.name}</span>
+                  </MotionDiv>
+                ))}
+
+                {annotations.filter(a => a.pageIndex === currentPage).map(anno => (
+                  <div key={anno.id} className="absolute pointer-events-auto cursor-pointer" onClick={() => setEditingAnnoId(anno.id)}
+                    style={{ left: `${anno.x}%`, top: `${anno.y}%`, width: anno.width ? `${anno.width}%` : '0%', height: anno.height ? `${anno.height}%` : '0%', 
+                      backgroundColor: anno.type === 'highlight' ? `${anno.color}44` : 'transparent', borderBottom: anno.type === 'underline' ? `3px solid ${anno.color}` : 'none', border: anno.type === 'box' ? `2px solid ${anno.color}` : 'none' }}
+                  >
+                    {anno.type === 'note' && <div className="w-7 h-7 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-2xl border-2 border-white flex items-center justify-center" style={{ backgroundColor: anno.color }}><MessageSquare size={12} className="text-white" /></div>}
                   </div>
-                </div>
-              </MotionDiv>
+                ))}
+                {currentRect && <div className="absolute border-2 border-dashed pointer-events-none" style={{ left: `${currentRect.x}%`, top: `${currentRect.y}%`, width: `${currentRect.w}%`, height: `${activeTool === 'underline' ? 0.8 : currentRect.h}%`, borderColor: activeColor, backgroundColor: activeTool === 'highlight' ? `${activeColor}22` : 'transparent' }} />}
+              </div>
+            </MotionDiv>
+          </div>
+        )}
+      </main>
+
+      <div className="fixed bottom-6 left-0 right-0 z-[2000] pointer-events-none px-6 flex flex-col items-center gap-4">
+        <AnimatePresence>
+          {showControls && (
+            <MotionDiv initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="flex flex-col items-center gap-4 pointer-events-auto">
+              
+              <AnimatePresence>
+                {isToolsOpen && (
+                  <MotionDiv initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="bg-black/80 backdrop-blur-3xl border border-white/10 px-4 py-2 rounded-full shadow-4xl flex items-center gap-3 mb-2">
+                    {(Object.keys(TOOL_ICONS) as Tool[]).map(tool => {
+                      const Icon = TOOL_ICONS[tool];
+                      const isActive = activeTool === tool;
+                      return (
+                        <div key={tool} className="relative flex items-center">
+                          <button onClick={() => setActiveTool(activeTool === tool ? 'view' : tool)} className={`w-8 h-8 flex items-center justify-center rounded-full transition-all duration-300 ${isActive ? 'bg-red-600 text-white shadow-xl scale-110' : 'text-white/30 hover:bg-white/5'}`}><Icon size={14}/></button>
+                          {isActive && tool !== 'view' && (
+                            <div className="absolute -top-10 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/95 p-1.5 rounded-full border border-white/10 shadow-2xl">
+                              {COLORS.map(c => (
+                                <button key={c.hex} onClick={() => setActiveColor(c.hex)} className={`w-3.5 h-3.5 rounded-full border transition-all ${activeColor === c.hex ? 'border-white scale-125 shadow-[0_0_8px_white]' : 'border-transparent opacity-60 hover:opacity-100'}`} style={{ backgroundColor: c.hex }} />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </MotionDiv>
+                )}
+              </AnimatePresence>
+
+              <div className="bg-red-600/10 border border-red-600/30 px-5 py-1.5 rounded-full backdrop-blur-xl flex items-center gap-2 shadow-2xl">
+                 <Clock size={12} className="text-red-600 animate-pulse" />
+                 <span className="text-[10px] md:text-xs font-black text-red-600 tracking-widest">{Math.floor(sessionSeconds/60)}m</span>
+              </div>
+
+              <div className="bg-black/60 backdrop-blur-3xl border border-white/10 rounded-full p-2 flex items-center gap-2 shadow-4xl">
+                 <button onClick={() => setIsThumbnailsOpen(!isThumbnailsOpen)} className={`w-9 h-9 flex items-center justify-center rounded-full transition-all ${isThumbnailsOpen ? 'bg-white text-black shadow-xl' : 'text-white/40 hover:bg-white/5'}`}><LayoutGrid size={16}/></button>
+                 <div className="flex items-center gap-1 bg-white/5 rounded-full px-4 py-1.5 border border-white/5">
+                   <button onClick={() => handlePageChange(currentPage-1)} className="text-white/30 hover:text-white transition-colors"><ChevronLeft size={16}/></button>
+                   <span className="text-[10px] font-black text-white px-2 min-w-[40px] text-center">{currentPage+1}/{totalPages}</span>
+                   <button onClick={() => handlePageChange(currentPage+1)} className="text-white/30 hover:text-white transition-colors"><ChevronRight size={16}/></button>
+                 </div>
+                 <button onClick={() => setIsGoToPageOpen(true)} className="w-9 h-9 flex items-center justify-center rounded-full text-white/40 hover:bg-white/5 transition-colors"><Search size={16}/></button>
+              </div>
             </MotionDiv>
           )}
         </AnimatePresence>
       </div>
-    </Layout>
+
+      <AnimatePresence>
+        {isGoToPageOpen && (
+          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-6 pointer-events-auto">
+            <MotionDiv initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-[#0b140b] border border-white/10 p-8 rounded-[2.5rem] w-full max-w-xs shadow-5xl text-center">
+              <h3 className="text-sm font-black uppercase mb-6 tracking-widest text-white/40">{t.goToPage}</h3>
+              <form onSubmit={jumpToPage}>
+                <input autoFocus type="number" value={targetPageInput} onChange={(e) => setTargetPageInput(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-2xl font-black text-center text-white outline-none mb-6 focus:border-red-600/50" placeholder={`1 - ${totalPages}`} />
+                <div className="flex gap-2"><button type="button" onClick={() => setIsGoToPageOpen(false)} className="flex-1 py-3 text-white/30 uppercase font-black text-[9px] tracking-widest">{t.discard}</button><button type="submit" className="flex-1 bg-red-600 py-3 rounded-xl font-black uppercase text-[9px] tracking-widest shadow-lg text-white">{t.jump}</button></div>
+              </form>
+            </MotionDiv>
+          </MotionDiv>
+        )}
+
+        {isSoundPickerOpen && (
+          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4 pointer-events-auto">
+            <div className="bg-[#0b140b] border border-white/10 p-6 md:p-8 rounded-[2.5rem] w-full max-w-xs shadow-3xl">
+              <div className="flex justify-between items-center mb-6"><h3 className="text-sm font-black italic uppercase text-white/50 tracking-widest">{t.soundscape}</h3><button onClick={() => setIsSoundPickerOpen(false)} className="hover:text-red-600 transition-colors"><X size={18}/></button></div>
+              
+              {/* Volume Slider */}
+              {activeSoundId !== 'none' && (
+                <div className="mb-6 px-2">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-white/30">{t.volume}</span>
+                    <span className="text-[9px] font-black text-red-600">{Math.round(volume * 100)}%</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="1" 
+                    step="0.01" 
+                    value={volume} 
+                    onChange={(e) => setVolume(parseFloat(e.target.value))}
+                    className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-red-600"
+                  />
+                </div>
+              )}
+
+              <div className="grid gap-2 max-h-[50vh] overflow-y-auto no-scrollbar">
+                {SOUNDS.map(sound => (
+                  <button key={sound.id} onClick={() => playSound(sound)} className={`flex items-center justify-between p-3 rounded-xl border transition-all ${activeSoundId === sound.id ? 'bg-red-600/20 border-red-600/50' : 'bg-white/5 border-transparent hover:bg-white/10'}`}>
+                    <div className="flex items-center gap-3"><sound.icon size={16} className={activeSoundId === sound.id ? "text-red-600" : "text-white/40"} /><span className="text-[10px] font-bold uppercase tracking-widest">{t[sound.id as keyof typeof t] || sound.id}</span></div>
+                    {activeSoundId === sound.id && <div className="w-1.5 h-1.5 rounded-full bg-red-600 shadow-[0_0_8px_#ff0000]" />}
+                  </button>
+                ))}
+                {/* Custom Sound Option */}
+                <button onClick={() => audioInputRef.current?.click()} className={`flex items-center justify-between p-3 rounded-xl border transition-all ${activeSoundId === 'custom' ? 'bg-red-600/20 border-red-600/50' : 'bg-white/5 border-transparent hover:bg-white/10'}`}>
+                  <div className="flex items-center gap-3"><FileAudio size={16} className={activeSoundId === 'custom' ? "text-red-600" : "text-white/40"} /><span className="text-[10px] font-bold uppercase tracking-widest truncate max-w-[140px]">{customSoundName || t.uploadCustomSound}</span></div>
+                  {activeSoundId === 'custom' && <div className="w-1.5 h-1.5 rounded-full bg-red-600 shadow-[0_0_8px_#ff0000]" />}
+                </button>
+              </div>
+            </div>
+          </MotionDiv>
+        )}
+
+        {isArchiveOpen && (
+          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/40 backdrop-blur-[40px] p-6 flex items-center justify-center pointer-events-auto">
+             <MotionDiv initial={{ y: 50 }} animate={{ y: 0 }} className="w-full max-w-xl bg-[#0b140b] border border-white/10 rounded-[2.5rem] p-6 max-h-[70vh] overflow-hidden flex flex-col shadow-4xl">
+                <div className="flex justify-between items-center mb-6 shrink-0">
+                  <h2 className="text-lg font-black italic uppercase tracking-tighter text-white/60">{t.wisdomIndex}</h2>
+                  <button onClick={() => setIsArchiveOpen(false)} className="hover:text-red-600 transition-colors p-1.5 bg-white/5 rounded-full"><X size={16}/></button>
+                </div>
+                <div className="flex-1 overflow-y-auto custom-scroll space-y-2 pr-1">
+                  {annotations.length === 0 ? <p className="text-center opacity-20 py-20 uppercase font-black tracking-widest text-xs">{t.noAnnotations}</p> : 
+                    [...annotations].sort((a,b) => a.pageIndex - b.pageIndex).map(anno => (
+                    <div key={anno.id} className="p-3.5 bg-white/[0.03] rounded-xl border border-white/5 hover:border-red-600/30 transition-all flex items-start justify-between gap-3">
+                      <div className="cursor-pointer flex-1" onClick={() => { handlePageChange(anno.pageIndex); setIsArchiveOpen(false); }}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: anno.color }} />
+                          <span className="text-[8px] font-black text-red-600 uppercase tracking-widest">{t.page} {anno.pageIndex + 1}</span>
+                        </div>
+                        <h4 className="text-[10px] font-black text-white/90 truncate">{anno.title || '...'}</h4>
+                      </div>
+                      <button onClick={() => { setEditingAnnoId(anno.id); setIsArchiveOpen(false); }} className="p-2 text-white/20 hover:text-white transition-all rounded-lg bg-white/5"><Edit3 size={12} /></button>
+                    </div>
+                  ))}
+                </div>
+             </MotionDiv>
+          </MotionDiv>
+        )}
+
+        {editingAnnoId && currentEditingAnno && (
+          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[4000] bg-black/60 backdrop-blur-xl flex items-center justify-center p-6 pointer-events-auto">
+            <MotionDiv initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-black/40 backdrop-blur-2xl border border-white/10 p-5 rounded-[2rem] w-full max-w-[300px] shadow-5xl flex flex-col">
+              <div className="flex items-center justify-between mb-4">
+                 <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-xl bg-white/5 border border-white/10" style={{ color: currentEditingAnno.color }}><Highlighter size={16} /></div>
+                    <h3 className="text-xs font-black uppercase text-white/90">{isRTL ? 'بيانات التعديل' : 'Modification Details'}</h3>
+                 </div>
+                 <button onClick={() => setEditingAnnoId(null)} className="p-1.5 rounded-full bg-white/5 text-white/30 hover:text-white"><X size={14}/></button>
+              </div>
+              <div className="space-y-3 flex-1 overflow-y-auto no-scrollbar pr-1">
+                <input type="text" value={currentEditingAnno.title || ''} onChange={(e) => updateEditingAnnotation({ title: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-[10px] font-bold text-white outline-none focus:border-red-600/50" placeholder={isRTL ? 'عنوان التعديل...' : 'Entry Title...'} />
+                <textarea value={currentEditingAnno.text || ''} onChange={(e) => updateEditingAnnotation({ text: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-[10px] font-bold text-white outline-none focus:border-red-600/50 min-h-[70px] resize-none" placeholder={isRTL ? 'ملاحظات استخلاص الحكمة...' : 'Wisdom Notes...'} />
+                <div className="flex flex-wrap gap-1.5">{COLORS.map(c => (<button key={c.hex} onClick={() => updateEditingAnnotation({ color: c.hex })} className={`w-5 h-5 rounded-full border transition-all ${currentEditingAnno.color === c.hex ? 'border-white scale-110 shadow-[0_0_8px_white]' : 'border-transparent opacity-60'}`} style={{ backgroundColor: c.hex }} />))}</div>
+              </div>
+              <div className="flex gap-2 mt-4 pt-3 border-t border-white/5">
+                <button onClick={() => { setAnnotations(annotations.filter(a => a.id !== editingAnnoId)); setEditingAnnoId(null); }} className="w-9 h-9 bg-red-600/10 border border-red-600/20 text-red-600 rounded-lg flex items-center justify-center hover:bg-red-600 hover:text-white transition-all"><Trash2 size={14}/></button>
+                <button onClick={() => setEditingAnnoId(null)} className="flex-1 bg-white text-black py-2 rounded-lg font-black uppercase text-[8px] tracking-widest hover:bg-red-600 hover:text-white transition-all flex items-center justify-center gap-2"><Check size={12}/>{isRTL ? 'حفظ بالفهرس' : 'Save to Index'}</button>
+              </div>
+            </MotionDiv>
+          </MotionDiv>
+        )}
+      </AnimatePresence>
+    </div>
   );
 };
-
-export default App;
