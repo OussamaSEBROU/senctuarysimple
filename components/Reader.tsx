@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+// Version: 1.1.0 - Refined Header & Session Mode
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Language } from '../types';
 import type { Book, Annotation } from '../types';
@@ -12,8 +13,13 @@ import {
   ListOrdered, Volume2, CloudLightning, Waves, 
   Moon, Bird, Flame, VolumeX, Sparkles, Search, Droplets,
   Edit3, Sun, Clock, BoxSelect, Palette, Check, LayoutGrid,
-  FileAudio
+  FileAudio, Users, Send, MessageCircle, Share2, Zap,
+  Mic, MicOff, Hand, Ghost, BookOpen,
+  PhoneOff, Video, VideoOff, MoreVertical, Monitor, ArrowLeft
 } from 'lucide-react';
+import { Socket } from 'socket.io-client';
+import { ChatMessage } from '../types';
+import Peer from 'simple-peer';
 
 declare const pdfjsLib: any;
 
@@ -23,8 +29,12 @@ const MotionHeader = motion.header as any;
 interface ReaderProps {
   book: Book;
   lang: Language;
+  userId?: string;
   onBack: () => void;
   onStatsUpdate: (starReached?: number | null) => void;
+  socket?: Socket | null;
+  roomId?: string | null;
+  roomData?: any;
 }
 
 type Tool = 'view' | 'highlight' | 'underline' | 'box' | 'note';
@@ -39,12 +49,12 @@ const COLORS = [
 
 const SOUNDS = [
   { id: 'none', icon: VolumeX, url: '' },
-  { id: 'rain', icon: CloudLightning, url: 'https://www.soundjay.com/nature/rain-01.mp3' },
-  { id: 'sea', icon: Waves, url: 'https://www.soundjay.com/nature/ocean-wave-1.mp3' },
-  { id: 'river', icon: Droplets, url: 'https://www.soundjay.com/nature/river-1.mp3' },
-  { id: 'night', icon: Moon, url: 'https://www.soundjay.com/nature/cricket-chirping-1.mp3' },
-  { id: 'birds', icon: Bird, url: 'https://www.soundjay.com/nature/birds-chirping-1.mp3' },
-  { id: 'fire', icon: Flame, url: 'https://www.soundjay.com/nature/fire-1.mp3' }
+  { id: 'rain', icon: CloudLightning, url: '/assets/sounds/rain.mp3' },
+  { id: 'sea', icon: Waves, url: '/assets/sounds/sea.mp3' },
+  { id: 'river', icon: Droplets, url: '/assets/sounds/river.mp3' },
+  { id: 'night', icon: Moon, url: '/assets/sounds/night.mp3' },
+  { id: 'birds', icon: Bird, url: '/assets/sounds/birds.mp3' },
+  { id: 'fire', icon: Flame, url: '/assets/sounds/fire.mp3' }
 ];
 
 const TOOL_ICONS = {
@@ -55,13 +65,13 @@ const TOOL_ICONS = {
   note: MessageSquare
 };
 
-export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdate }) => {
+export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onStatsUpdate, socket, roomId, roomData }) => {
   const [isZenMode, setIsZenMode] = useState(false);
   const [isNightMode, setIsNightMode] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [pages, setPages] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(book.lastPage || 0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [totalPages, setTotalPages] = useState(0);
   
   const [activeTool, setActiveTool] = useState<Tool>('view');
@@ -77,13 +87,37 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
   const [isSoundPickerOpen, setIsSoundPickerOpen] = useState(false);
   const [isToolsOpen, setIsToolsOpen] = useState(false);
   const [isThumbnailsOpen, setIsThumbnailsOpen] = useState(false);
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
+  const [pdfRequestSent, setPdfRequestSent] = useState(false);
   const [activeSoundId, setActiveSoundId] = useState('none');
+  const [volume, setVolume] = useState(0.5);
   const [customSoundName, setCustomSoundName] = useState('');
   const [targetPageInput, setTargetPageInput] = useState('');
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [zoomScale, setZoomScale] = useState(1);
   const [isPinching, setIsPinching] = useState(false);
   const [direction, setDirection] = useState(0); 
+
+  // Collective Mode State
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [members, setMembers] = useState<any[]>([]);
+  const [memberCursors, setMemberCursors] = useState<Record<string, { x: number, y: number, name: string }>>({});
+  const [activeReactions, setActiveReactions] = useState<any[]>([]);
+  const [isMembersListOpen, setIsMembersListOpen] = useState(false);
+  const [isMicActive, setIsMicActive] = useState(false);
+  const [isSpeakerActive, setIsSpeakerActive] = useState(true);
+  const [isHandRaised, setIsHandRaised] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const [showCopySuccess, setShowCopySuccess] = useState(false);
+  const [speakingMembers, setSpeakingMembers] = useState<Set<string>>(new Set());
+  const [peers, setPeers] = useState<Record<string, Peer.Instance>>({});
+  const streamRef = useRef<MediaStream | null>(null);
+  const peersRef = useRef<Record<string, Peer.Instance>>({});
+  const isAdmin = socket && roomData?.adminId === userId;
   
   const initialPinchDistance = useRef<number | null>(null);
   const initialScaleOnPinch = useRef<number>(1);
@@ -99,14 +133,256 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
   const fontClass = isRTL ? 'font-ar' : 'font-en';
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (isGoToPageOpen || editingAnnoId || activeTool !== 'view') return;
-      if (e.key === 'ArrowRight') handlePageChange(currentPage + 1);
-      else if (e.key === 'ArrowLeft') handlePageChange(currentPage - 1);
+    if (!roomId) return;
+    const interval = setInterval(() => {
+      setSessionSeconds(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [roomId]);
+
+  const formatSessionTime = (totalSeconds: number) => {
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+    return `${hrs > 0 ? hrs + ':' : ''}${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  useEffect(() => {
+    if (!socket || !roomId) return;
+
+    socket.on("pdf-requested", async ({ bookId, requesterId }) => {
+      if (isAdmin && bookId === book.id) {
+        console.log("Admin: PDF requested by", requesterId);
+        const data = await pdfStorage.getFile(bookId);
+        if (data) {
+          socket.emit("send-pdf", { roomId, bookId, requesterId, pdfData: data });
+        }
+      }
+    });
+
+    socket.on("pdf-received", async ({ bookId, pdfData }) => {
+      if (bookId === book.id) {
+        console.log("Joiner: PDF received!");
+        await pdfStorage.saveFile(bookId, pdfData);
+        setPdfRequestSent(false); // Trigger reload
+      }
+    });
+
+    // Voice Chat Logic
+    const setupVoice = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        streamRef.current = stream;
+        
+        // Mute by default if mic is not active
+        stream.getAudioTracks().forEach(track => track.enabled = isMicActive);
+      } catch (err) {
+        console.error("Failed to get media stream", err);
+      }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentPage, totalPages, isGoToPageOpen, editingAnnoId, activeTool]);
+
+    setupVoice();
+
+    socket.on("room-updated", (data) => {
+      setMembers(data.members);
+      
+      // Handle new members for voice chat
+      if (streamRef.current) {
+        data.members.forEach((member: any) => {
+          if (member.id !== userId && !peersRef.current[member.id]) {
+            // Create peer for new member
+            createPeer(member.id, streamRef.current!);
+          }
+        });
+      }
+    });
+
+    socket.on("voice-signal", ({ from, signal }) => {
+      const peer = peersRef.current[from];
+      if (peer) {
+        peer.signal(signal);
+      } else if (streamRef.current) {
+        // If we receive a signal from someone we don't have a peer for, create one
+        addPeer(signal, from, streamRef.current!);
+      }
+    });
+
+    const createPeer = (userToSignal: string, stream: MediaStream) => {
+      const combinedStream = new MediaStream([...stream.getTracks()]);
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(track => combinedStream.addTrack(track));
+      }
+
+      const peer = new Peer({
+        initiator: true,
+        trickle: false,
+        stream: combinedStream,
+      });
+
+      peer.on("signal", signal => {
+        socket.emit("send-voice-signal", { userToSignal, signal, from: userId });
+      });
+
+      peer.on("stream", stream => {
+        if (stream.getVideoTracks().length > 0) {
+          setRemoteScreenStream(stream);
+        }
+        
+        if (stream.getAudioTracks().length > 0) {
+          const audio = document.createElement("audio");
+          audio.srcObject = stream;
+          audio.autoplay = true;
+          audio.id = `audio-${userToSignal}`;
+          document.body.appendChild(audio);
+        }
+      });
+
+      peersRef.current[userToSignal] = peer;
+      setPeers(prev => ({ ...prev, [userToSignal]: peer }));
+    };
+
+    const addPeer = (incomingSignal: any, callerId: string, stream: MediaStream) => {
+      const combinedStream = new MediaStream([...stream.getTracks()]);
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach(track => combinedStream.addTrack(track));
+      }
+
+      const peer = new Peer({
+        initiator: false,
+        trickle: false,
+        stream: combinedStream,
+      });
+
+      peer.on("signal", signal => {
+        socket.emit("return-voice-signal", { signal, to: callerId, from: userId });
+      });
+
+      peer.on("stream", stream => {
+        if (stream.getVideoTracks().length > 0) {
+          setRemoteScreenStream(stream);
+        }
+
+        if (stream.getAudioTracks().length > 0) {
+          const audio = document.createElement("audio");
+          audio.srcObject = stream;
+          audio.autoplay = true;
+          audio.id = `audio-${callerId}`;
+          document.body.appendChild(audio);
+        }
+      });
+
+      peer.signal(incomingSignal);
+      peersRef.current[callerId] = peer;
+      setPeers(prev => ({ ...prev, [callerId]: peer }));
+    };
+
+    socket.on("member-moved", ({ id, page }) => {
+      setMembers(prev => prev.map(m => m.id === id ? { ...m, currentPage: page } : m));
+    });
+
+    socket.on("member-cursor", ({ id, cursor }) => {
+      const member = members.find(m => m.id === id);
+      if (member) {
+        setMemberCursors(prev => ({ ...prev, [id]: { ...cursor, name: member.name } }));
+      }
+    });
+
+    socket.on("new-highlight", (highlight) => {
+      setAnnotations(prev => [...prev, highlight]);
+    });
+
+    socket.on("new-chat", (msg) => {
+      setChatMessages(prev => [...prev, msg]);
+    });
+
+    socket.on("new-reaction", ({ id, reaction }) => {
+      const member = members.find(m => m.id === id);
+      const newReaction = { id: Math.random(), emoji: reaction, name: member?.name || '...' };
+      setActiveReactions(prev => [...prev, newReaction]);
+      setTimeout(() => {
+        setActiveReactions(prev => prev.filter(r => r.id !== newReaction.id));
+      }, 3000);
+    });
+
+    socket.on("summoned", (page) => {
+      handlePageChange(page);
+    });
+
+    socket.on("mic-status-changed", ({ id, active }) => {
+      setSpeakingMembers(prev => {
+        const next = new Set(prev);
+        if (active) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+    });
+
+    socket.on("hand-raised", ({ id, raised }) => {
+      setMembers(prev => prev.map(m => m.id === id ? { ...m, isHandRaised: raised } : m));
+      if (raised) {
+        const member = members.find(m => m.id === id);
+        const newReaction = { id: Math.random(), emoji: '✋', name: member?.name || '...' };
+        setActiveReactions(prev => [...prev, newReaction]);
+        setTimeout(() => {
+          setActiveReactions(prev => prev.filter(r => r.id !== newReaction.id));
+        }, 5000);
+      }
+    });
+
+    return () => {
+      socket.off("room-updated");
+      socket.off("member-moved");
+      socket.off("member-cursor");
+      socket.off("new-highlight");
+      socket.off("new-chat");
+      socket.off("new-reaction");
+      socket.off("summoned");
+      socket.off("mic-status-changed");
+      socket.off("hand-raised");
+    };
+  }, [socket, roomId, members]);
+
+  const toggleHand = () => {
+    if (!socket || !roomId) return;
+    const newState = !isHandRaised;
+    setIsHandRaised(newState);
+    socket.emit("raise-hand", { roomId, raised: newState });
+  };
+
+  const toggleMic = () => {
+    if (!socket || !roomId) return;
+    const newState = !isMicActive;
+    setIsMicActive(newState);
+    
+    if (streamRef.current) {
+      streamRef.current.getAudioTracks().forEach(track => track.enabled = newState);
+    }
+    
+    socket.emit("toggle-mic", { roomId, active: newState });
+  };
+
+  const sendCursorUpdate = (clientX: number, clientY: number) => {
+    if (!socket || !roomId || activeTool !== 'view') return;
+    const { x, y } = getRelativeCoords(clientX, clientY);
+    socket.emit("cursor-move", { roomId, cursor: { x, y } });
+  };
+
+  const sendChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!socket || !roomId || !chatInput.trim()) return;
+    socket.emit("send-chat", { roomId, message: { text: chatInput, name: lang === 'ar' ? 'أنا' : 'Me' } });
+    setChatInput('');
+  };
+
+  const sendReaction = (emoji: string) => {
+    if (!socket || !roomId) return;
+    socket.emit("send-reaction", { roomId, reaction: emoji });
+  };
+
+  const summonAll = () => {
+    if (!socket || !roomId || !isAdmin) return;
+    socket.emit("summon-all", { roomId, page: currentPage });
+  };
 
   const toggleZenMode = async () => {
     if (!isZenMode) {
@@ -128,47 +404,115 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
   }, [isZenMode]);
 
   useEffect(() => {
+    // Handle speaker toggle
+    const audios = document.querySelectorAll('audio[id^="audio-"]');
+    audios.forEach((audio: any) => {
+      audio.muted = !isSpeakerActive;
+    });
+  }, [isSpeakerActive]);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      Object.values(peersRef.current).forEach(peer => peer.destroy());
+      const audios = document.querySelectorAll('audio[id^="audio-"]');
+      audios.forEach(audio => audio.remove());
+    };
+  }, []);
+
+  useEffect(() => {
     if (isZenMode) setShowControls(false);
     else { setShowControls(true); if (controlsTimeoutRef.current) window.clearTimeout(controlsTimeoutRef.current); }
   }, [isZenMode]);
 
-  const handleUserActivity = () => {
+  const lastActivityRef = useRef<number>(0);
+  const handleUserActivity = useCallback(() => {
     if (!isZenMode) return;
+    const now = Date.now();
+    if (now - lastActivityRef.current < 100) return; // Throttle to 100ms
+    lastActivityRef.current = now;
+
     setShowControls(true);
     if (controlsTimeoutRef.current) window.clearTimeout(controlsTimeoutRef.current);
     controlsTimeoutRef.current = window.setTimeout(() => { setShowControls(false); }, 4500);
-  };
+  }, [isZenMode]);
 
   useEffect(() => {
     const loadPdf = async () => {
       const fileData = await pdfStorage.getFile(book.id);
-      if (!fileData) { onBack(); return; }
+      if (!fileData) {
+        if (roomId && socket && !pdfRequestSent) {
+          console.log("PDF not found locally, requesting from room...");
+          setIsPdfLoading(true);
+          setPdfRequestSent(true);
+          socket.emit("request-pdf", { roomId, bookId: book.id, requesterId: userId });
+        } else if (!roomId) {
+          onBack();
+        }
+        return;
+      }
       try {
+        if (!roomId) setIsLoading(true); // Only show loading for local files
         const pdf = await pdfjsLib.getDocument({ data: fileData }).promise;
         setTotalPages(pdf.numPages);
         const tempPages = new Array(pdf.numPages).fill(null);
         
         const renderSinglePage = async (idx: number) => {
           if (idx < 0 || idx >= pdf.numPages || tempPages[idx]) return;
-          const p = await pdf.getPage(idx + 1);
-          const vp = p.getViewport({ scale: 1.5 });
-          const cv = document.createElement('canvas');
-          cv.height = vp.height; cv.width = vp.width;
-          await p.render({ canvasContext: cv.getContext('2d')!, viewport: vp }).promise;
-          tempPages[idx] = cv.toDataURL('image/jpeg', 0.8);
-          setPages([...tempPages]);
+          try {
+            const p = await pdf.getPage(idx + 1);
+            const vp = p.getViewport({ scale: 1.5 });
+            const cv = document.createElement('canvas');
+            cv.height = vp.height; cv.width = vp.width;
+            await p.render({ canvasContext: cv.getContext('2d')!, viewport: vp }).promise;
+            tempPages[idx] = cv.toDataURL('image/jpeg', 0.8);
+            return tempPages[idx];
+          } catch (e) {
+            console.error("Error rendering page", idx, e);
+            return null;
+          }
         };
 
+        // 1. Render current page immediately
         await renderSinglePage(currentPage);
+        setPages([...tempPages]);
         setIsLoading(false);
+        setIsPdfLoading(false);
 
+        // 2. Render neighbors for smooth transition
+        const neighbors = [currentPage - 1, currentPage + 1];
+        for (const n of neighbors) {
+          if (n >= 0 && n < pdf.numPages) {
+            await renderSinglePage(n);
+          }
+        }
+        setPages([...tempPages]);
+
+        // 3. Render the rest in chunks to avoid UI freezing and excessive re-renders
         const loadRest = async () => {
-          for (let i = 0; i < pdf.numPages; i++) {
-            if (!tempPages[i]) await renderSinglePage(i);
+          const CHUNK_SIZE = 5;
+          for (let i = 0; i < pdf.numPages; i += CHUNK_SIZE) {
+            let chunkUpdated = false;
+            for (let j = i; j < i + CHUNK_SIZE && j < pdf.numPages; j++) {
+              if (!tempPages[j]) {
+                await renderSinglePage(j);
+                chunkUpdated = true;
+              }
+            }
+            if (chunkUpdated) {
+              setPages([...tempPages]);
+              // Yield to main thread
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
           }
         };
         loadRest();
-      } catch (err) {}
+      } catch (err) {
+        setIsLoading(false);
+        setIsPdfLoading(false);
+      }
     };
     loadPdf();
 
@@ -182,7 +526,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
       if (timerRef.current) clearInterval(timerRef.current); 
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current); 
     };
-  }, [book.id]);
+  }, [book.id, pdfRequestSent]);
 
   useEffect(() => { 
     storageService.updateBookAnnotations(book.id, annotations); 
@@ -195,6 +539,47 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
       setZoomScale(1);
       setCurrentPage(newPage);
       storageService.updateBookPage(book.id, newPage);
+      if (socket && roomId) {
+        socket.emit("update-page", { roomId, page: newPage });
+      }
+    }
+  };
+
+  const startScreenShare = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      screenStreamRef.current = stream;
+      setIsScreenSharing(true);
+      
+      // Add track to all existing peers
+      Object.values(peersRef.current).forEach(peer => {
+        stream.getTracks().forEach(track => {
+          peer.addTrack(track, stream);
+        });
+      });
+
+      stream.getVideoTracks()[0].onended = () => stopScreenShare();
+    } catch (err) {
+      console.error("Error sharing screen:", err);
+      setIsScreenSharing(false);
+    }
+  };
+
+  const stopScreenShare = () => {
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach(track => track.stop());
+      screenStreamRef.current = null;
+    }
+    setIsScreenSharing(false);
+    // SimplePeer doesn't have a clean way to remove tracks without renegotiation in some versions,
+    // but stopping tracks will stop the stream on the other end.
+  };
+
+  const toggleScreenShare = () => {
+    if (isScreenSharing) {
+      stopScreenShare();
+    } else {
+      startScreenShare();
     }
   };
 
@@ -214,12 +599,25 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
       audioRef.current.pause();
       if (sound.id !== 'none') {
         audioRef.current.src = sound.url;
+        audioRef.current.volume = volume;
         audioRef.current.load();
-        audioRef.current.play().catch(e => console.warn("Audio feedback:", e));
+        audioRef.current.play().catch(e => {
+          console.error("Audio playback failed:", e);
+          // Fallback for some browsers: try playing after a short delay
+          setTimeout(() => {
+            audioRef.current?.play().catch(err => console.warn("Retry failed:", err));
+          }, 100);
+        });
       }
     }
     setIsSoundPickerOpen(false);
   };
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+    }
+  }, [volume]);
 
   const handleCustomAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -281,6 +679,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
   };
 
   const handleMove = (clientX: number, clientY: number) => {
+    sendCursorUpdate(clientX, clientY);
     if (!isDrawing || isPinching) return;
     const { x: currentX, y: currentY } = getRelativeCoords(clientX, clientY);
     setCurrentRect({ x: Math.min(startPos.x, currentX), y: Math.min(startPos.y, currentY), w: Math.abs(currentX - startPos.x), h: Math.abs(currentY - startPos.y) });
@@ -306,6 +705,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
       };
       setAnnotations(prev => [...prev, newAnno]); 
       setEditingAnnoId(newAnno.id);
+      if (socket && roomId) {
+        socket.emit("send-highlight", { roomId, highlight: newAnno });
+      }
     }
     setIsDrawing(false); setCurrentRect(null);
   };
@@ -322,14 +724,226 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
       className={`h-screen flex flex-col bg-black overflow-hidden relative transition-all duration-1000 ${isZenMode && !showControls ? 'cursor-none' : ''} ${fontClass}`} 
       dir={isRTL ? 'rtl' : 'ltr'}
     >
-      <audio ref={audioRef} loop hidden />
+      <audio ref={audioRef} loop hidden preload="auto" />
       <input type="file" ref={audioInputRef} accept=".mp3,audio/mpeg" hidden onChange={handleCustomAudioUpload} />
 
+      {/* Live Stream View for Guests */}
       <AnimatePresence>
-        {isLoading && (
+        {remoteScreenStream && (
+          <MotionDiv 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 z-[1500] bg-black flex flex-col items-center justify-center pointer-events-auto"
+          >
+            <video 
+              autoPlay 
+              playsInline 
+              ref={video => { if (video) video.srcObject = remoteScreenStream; }} 
+              className="w-full h-full object-contain"
+            />
+            <div className="absolute top-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-red-600 px-6 py-2 rounded-full shadow-2xl">
+              <div className="w-2 h-2 rounded-full bg-white animate-ping" />
+              <span className="text-[10px] md:text-xs font-black uppercase tracking-[0.2em] text-white">
+                {isRTL ? 'بث مباشر من المشرف' : 'Live from Admin'}
+              </span>
+            </div>
+            <button 
+              onClick={() => setRemoteScreenStream(null)}
+              className="absolute top-6 right-6 p-3 bg-white/10 hover:bg-white/20 rounded-full text-white transition-all"
+            >
+              <X size={20} />
+            </button>
+          </MotionDiv>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isChatOpen && (
+          <MotionDiv 
+            initial={{ x: isRTL ? -400 : 400 }} 
+            animate={{ x: 0 }} 
+            exit={{ x: isRTL ? -400 : 400 }} 
+            className={`fixed top-0 bottom-0 ${isRTL ? 'left-0' : 'right-0'} w-full max-w-[350px] bg-black/80 backdrop-blur-3xl border-l border-white/10 z-[3000] flex flex-col shadow-5xl`}
+          >
+            <div className="p-6 border-b border-white/5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <MessageCircle size={20} className="text-red-600" />
+                <h3 className="text-sm font-black uppercase tracking-widest text-white/60">{isRTL ? 'نقاش المحراب' : 'Sanctuary Chat'}</h3>
+              </div>
+              <button onClick={() => setIsChatOpen(false)} className="p-2 rounded-full bg-white/5 text-white/40 hover:text-white"><X size={18}/></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scroll">
+              {chatMessages.map(msg => (
+                <div key={msg.id} className={`flex flex-col ${msg.senderId === socket?.id ? 'items-end' : 'items-start'}`}>
+                  <span className="text-[8px] font-black text-white/20 uppercase mb-1">{msg.senderName}</span>
+                  <div className={`px-4 py-2.5 rounded-2xl text-[11px] font-bold ${msg.senderId === socket?.id ? 'bg-red-600 text-white rounded-tr-none' : 'bg-white/5 text-white/80 rounded-tl-none'}`}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={sendChat} className="p-6 border-t border-white/5 flex gap-2">
+              <input 
+                type="text" 
+                value={chatInput} 
+                onChange={e => setChatInput(e.target.value)} 
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none focus:border-red-600/50" 
+                placeholder={isRTL ? 'اكتب رسالتك...' : 'Type a message...'} 
+              />
+              <button type="submit" className="w-11 h-11 bg-red-600 rounded-xl flex items-center justify-center text-white shadow-lg active:scale-90 transition-transform">
+                <Send size={18} />
+              </button>
+            </form>
+          </MotionDiv>
+        )}
+
+        {isMembersListOpen && (
+          <MotionDiv 
+            initial={{ y: '100%' }} 
+            animate={{ y: 0 }} 
+            exit={{ y: '100%' }} 
+            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+            className="fixed inset-0 z-[6000] bg-[#0f1721] flex flex-col pointer-events-auto"
+          >
+            {/* Telegram Header */}
+            <div className="p-4 md:p-6 flex items-center justify-between border-b border-white/5 bg-[#17212b]/50 backdrop-blur-md">
+              <div className="flex items-center gap-4">
+                <button onClick={() => setIsMembersListOpen(false)} className="p-2 text-white/60 hover:text-white transition-colors">
+                  <ArrowLeft size={24} />
+                </button>
+                <div className="flex flex-col">
+                  <h3 className="text-sm md:text-base font-bold text-white leading-tight">
+                    {roomData?.roomName || (isRTL ? 'مجموعة القراءة الجماعية' : 'Collective Reading Group')}
+                  </h3>
+                  <span className="text-[10px] md:text-xs text-blue-400 font-medium">
+                    {members.length} {isRTL ? 'مشاركين' : 'participants'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <button 
+                    onClick={toggleScreenShare}
+                    className={`p-2 transition-colors ${isScreenSharing ? 'text-red-500 animate-pulse' : 'text-white/60 hover:text-white'}`}
+                    title={isRTL ? 'بث مباشر للجلسة' : 'Live Stream Session'}
+                  >
+                    <Monitor size={20} />
+                  </button>
+                )}
+                <button className="p-2 text-white/60 hover:text-white transition-colors">
+                  <MoreVertical size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Telegram User List */}
+            <div className="flex-1 overflow-y-auto p-2 md:p-4 space-y-1 custom-scroll bg-[#0f1721]">
+              {members.map((m, idx) => (
+                <div key={m.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 transition-colors group">
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg ${
+                        idx % 3 === 0 ? 'bg-gradient-to-br from-blue-500 to-indigo-600' : 
+                        idx % 3 === 1 ? 'bg-gradient-to-br from-emerald-500 to-teal-600' : 
+                        'bg-gradient-to-br from-orange-500 to-red-600'
+                      }`}>
+                        {m.name.substring(0, 1)}
+                      </div>
+                      <div className="absolute bottom-0.5 right-0.5 w-3.5 h-3.5 bg-emerald-500 border-2 border-[#0f1721] rounded-full shadow-sm" />
+                    </div>
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-white">{m.name} {m.id === socket?.id && `(${isRTL ? 'أنت' : 'You'})`}</span>
+                        {roomData?.adminId === m.id && (
+                          <span className="text-[8px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 font-black uppercase rounded tracking-tighter">Admin</span>
+                        )}
+                        {m.isHandRaised && (
+                          <Hand size={12} className="text-yellow-500 animate-bounce" />
+                        )}
+                      </div>
+                      <span className="text-xs text-white/40 font-medium">
+                        {speakingMembers.has(m.id) ? (
+                          <span className="text-emerald-400">{isRTL ? 'يتحدث الآن...' : 'speaking now...'}</span>
+                        ) : (
+                          idx === 0 ? (isRTL ? 'كن مع الله ولا تبالي' : 'Be with God and don\'t care') :
+                          idx === 1 ? (isRTL ? 'إن الله لا يُعبد بالجهل..' : 'God is not worshipped in ignorance..') :
+                          (isRTL ? 'يستمع بتركيز' : 'listening intently')
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {speakingMembers.has(m.id) ? (
+                      <div className="flex gap-0.5 items-end h-4">
+                        <div className="w-1 bg-emerald-500 animate-[bounce_1s_infinite_0.1s]" style={{ height: '60%' }} />
+                        <div className="w-1 bg-emerald-500 animate-[bounce_1s_infinite_0.3s]" style={{ height: '100%' }} />
+                        <div className="w-1 bg-emerald-500 animate-[bounce_1s_infinite_0.2s]" style={{ height: '80%' }} />
+                      </div>
+                    ) : (
+                      <MicOff size={18} className="text-white/10" />
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Telegram Bottom Bar */}
+            <div className="p-6 md:p-10 bg-[#17212b] border-t border-white/5 flex items-center justify-around md:justify-center md:gap-16">
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={() => setIsSpeakerActive(!isSpeakerActive)}
+                  className={`w-12 h-12 md:w-16 md:h-16 rounded-full flex items-center justify-center transition-all ${isSpeakerActive ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/20' : 'bg-white/5 text-white/40'}`}
+                >
+                  {isSpeakerActive ? <Volume2 size={24} /> : <VolumeX size={24} />}
+                </button>
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{isRTL ? 'مكبر الصوت' : 'Speaker'}</span>
+              </div>
+
+              <div className="flex flex-col items-center gap-2 -mt-4">
+                <button 
+                  onClick={toggleMic}
+                  className={`w-20 h-20 md:w-28 md:h-28 rounded-full flex items-center justify-center transition-all relative ${isMicActive ? 'bg-emerald-500 text-white shadow-[0_0_40px_rgba(16,185,129,0.4)]' : 'bg-white/5 text-white/40 border-2 border-white/5'}`}
+                >
+                  {isMicActive ? <Mic size={36} className="animate-pulse" /> : <MicOff size={36} />}
+                  {isMicActive && (
+                    <div className="absolute inset-0 rounded-full border-4 border-emerald-400/30 animate-ping" />
+                  )}
+                </button>
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest mt-2">{isMicActive ? (isRTL ? 'كتم' : 'Mute') : (isRTL ? 'تحدث' : 'Unmute')}</span>
+              </div>
+
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={() => { setIsChatOpen(true); setIsMembersListOpen(false); }}
+                  className="w-12 h-12 md:w-16 md:h-16 rounded-full bg-white/5 text-white/40 flex items-center justify-center hover:bg-white/10 transition-all"
+                >
+                  <MessageCircle size={24} />
+                </button>
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{isRTL ? 'الرسائل' : 'Message'}</span>
+              </div>
+
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={onBack}
+                  className="w-12 h-12 md:w-16 md:h-16 rounded-full bg-red-500 text-white flex items-center justify-center shadow-lg shadow-red-500/20 hover:bg-red-600 transition-all"
+                >
+                  <PhoneOff size={24} />
+                </button>
+                <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">{isRTL ? 'مغادرة' : 'Leave'}</span>
+              </div>
+            </div>
+          </MotionDiv>
+        )}
+
+        {isLoading && !remoteScreenStream && (
           <MotionDiv key="loading-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[5000] bg-black flex flex-col items-center justify-center p-8 text-center pointer-events-none">
-            <Sparkles size={40} className="text-[#ff0000] animate-pulse mb-4" />
-            <h3 className="text-sm font-black uppercase tracking-[0.3em] text-white/80">{t.loadingMessages[0]}</h3>
+            <div className="w-12 h-12 rounded-full border-2 border-white/5 border-t-red-600 animate-spin mb-6" />
+            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40">
+              {isPdfLoading ? (lang === 'ar' ? 'جاري استلام المخطوطة...' : 'Receiving Manuscript...') : t.loadingMessages[0]}
+            </h3>
           </MotionDiv>
         )}
       </AnimatePresence>
@@ -337,17 +951,91 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
       <AnimatePresence>
         {showControls && (
           <MotionHeader initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} 
-            className="fixed top-0 left-0 right-0 p-4 md:p-6 flex items-center justify-between z-[1100] bg-gradient-to-b from-black via-black/40 to-transparent pointer-events-auto"
+            className="fixed top-0 left-0 right-0 p-2 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto"
           >
-            <div className="flex items-center gap-2 md:gap-3 pointer-events-auto">
-              {!isZenMode && <button onClick={onBack} className="w-9 h-9 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/60 hover:bg-white/10 active:scale-90"><ChevronLeft size={18} className={isRTL ? "rotate-180" : ""} /></button>}
-              <button onClick={() => setIsArchiveOpen(true)} className="w-9 h-9 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 active:scale-90"><ListOrdered size={18} /></button>
-              <button onClick={() => setIsSoundPickerOpen(true)} className={`w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all active:scale-90 ${activeSoundId !== 'none' ? 'bg-red-600 text-white shadow-lg' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}><Volume2 size={18} /></button>
-              <button onClick={() => setIsNightMode(!isNightMode)} className={`w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all active:scale-90 ${isNightMode ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>{isNightMode ? <Sun size={18} /> : <Moon size={18} />}</button>
+            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto">
+              {!roomId ? (
+                <button onClick={onBack} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/60 hover:bg-white/10 active:scale-90 shrink-0">
+                  <ChevronLeft size={16} className={isRTL ? "rotate-180" : ""} />
+                </button>
+              ) : (
+                <button onClick={onBack} className="flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2.5 bg-red-600/10 text-red-500 rounded-full hover:bg-red-600 hover:text-white transition-all group active:scale-95 shrink-0">
+                  <PhoneOff size={14} className="md:size-5" />
+                  <span className="text-[9px] md:text-xs font-black uppercase tracking-widest">{isRTL ? 'مغادرة' : 'Leave'}</span>
+                </button>
+              )}
+
+              <div className="flex flex-col shrink-0 px-1">
+                {!roomId ? (
+                  <h2 className="text-[9px] md:text-xs font-black text-white uppercase italic tracking-tighter truncate max-w-[80px] md:max-w-[180px] leading-none">
+                    {book.title}
+                  </h2>
+                ) : (
+                  <>
+                    <span className="text-[7px] md:text-[9px] font-black text-red-500 uppercase tracking-[0.2em] leading-none">
+                      {isRTL ? 'جلسة مباشرة' : 'LIVE SESSION'}
+                    </span>
+                    <span className="text-[6px] md:text-[8px] font-bold text-white/30 uppercase tracking-widest mt-0.5">
+                      {formatSessionTime(sessionSeconds)}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              <div className="h-4 w-[1px] bg-white/10 mx-1 shrink-0" />
+              
+              <button onClick={() => setIsArchiveOpen(true)} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 active:scale-90 shrink-0">
+                <ListOrdered size={16} />
+              </button>
+              
+              <button onClick={() => setIsNightMode(!isNightMode)} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all active:scale-90 shrink-0 ${isNightMode ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                {isNightMode ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+              
+              {socket && roomId && (
+                <div className="flex items-center gap-1.5 ml-1 md:ml-4 border-l border-white/10 pl-1 md:pl-4 shrink-0">
+                  {/* Raise Hand */}
+                  <button onClick={toggleHand} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all relative shrink-0 ${isHandRaised ? 'bg-yellow-500 text-black shadow-[0_0_15px_rgba(234,179,8,0.4)]' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                    <Hand size={16} className={isHandRaised ? "animate-bounce" : ""} />
+                  </button>
+
+                  <button onClick={() => setIsMembersListOpen(true)} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/40 hover:bg-white/10 relative shrink-0">
+                    <Users size={16} />
+                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[7px] font-black w-3.5 h-3.5 rounded-full flex items-center justify-center">
+                      {members.length}
+                    </span>
+                  </button>
+                  
+                  <button onClick={() => setIsChatOpen(!isChatOpen)} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all shrink-0 ${isChatOpen ? 'bg-red-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                    <MessageCircle size={16} />
+                  </button>
+                  
+                  <button onClick={toggleMic} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all relative shrink-0 ${isMicActive ? 'bg-emerald-600 text-white shadow-[0_0_15px_rgba(16,185,129,0.4)]' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}>
+                    {isMicActive ? <Mic size={16} className="animate-pulse" /> : <MicOff size={16} />}
+                  </button>
+                  
+                  <button 
+                    onClick={() => {
+                      const url = `${window.location.origin}?room=${roomId}`;
+                      navigator.clipboard.writeText(url);
+                      setShowCopySuccess(true);
+                      setTimeout(() => setShowCopySuccess(false), 2000);
+                    }}
+                    className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all relative shrink-0 ${showCopySuccess ? 'bg-emerald-600 text-white' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+                  >
+                    {showCopySuccess ? <Check size={16} /> : <Share2 size={16} />}
+                  </button>
+                </div>
+              )}
             </div>
-            <div className="flex items-center gap-2 pointer-events-auto">
-              <button onClick={() => setIsToolsOpen(!isToolsOpen)} className={`w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all active:scale-90 ${isToolsOpen ? 'bg-white text-black shadow-xl' : 'bg-white/5 text-white/40'}`}><Palette size={18} /></button>
-              <button onClick={toggleZenMode} className={`w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-full border transition-all ${isZenMode ? 'bg-red-600 border-red-600 text-white' : 'bg-white/5 border-white/10 text-white/40'}`}><Maximize2 size={18} /></button>
+
+            <div className="flex items-center gap-1.5 pointer-events-auto shrink-0">
+              <button onClick={() => setIsToolsOpen(!isToolsOpen)} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full transition-all active:scale-90 shrink-0 ${isToolsOpen ? 'bg-white text-black shadow-xl' : 'bg-white/5 text-white/40'}`}>
+                <Palette size={16} />
+              </button>
+              <button onClick={toggleZenMode} className={`w-8 h-8 md:w-11 md:h-11 flex items-center justify-center rounded-full border transition-all shrink-0 ${isZenMode ? 'bg-red-600 border-red-600 text-white' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                <Maximize2 size={16} />
+              </button>
             </div>
           </MotionHeader>
         )}
@@ -402,13 +1090,34 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
                   transition={{ duration: 0.12, ease: "easeOut" }}
                   className="w-full h-full flex items-center justify-center bg-transparent"
                 >
-                  {pages[currentPage] && (
+                  {pages[currentPage] ? (
                     <img src={pages[currentPage]} className="w-full h-full object-contain pointer-events-none select-none" style={{ filter: isNightMode ? 'invert(1) hue-rotate(180deg)' : 'none' }} alt={`Page ${currentPage + 1}`} />
+                  ) : roomId && !isAdmin && (
+                    <div className="flex flex-col items-center gap-4 text-center p-8">
+                      <div className="w-12 h-12 rounded-full border-2 border-white/5 border-t-red-600 animate-spin mb-2" />
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
+                        {isRTL ? 'بانتظار بث المشرف أو وصول المخطوطة...' : 'Waiting for admin stream or manuscript...'}
+                      </p>
+                    </div>
                   )}
                 </MotionDiv>
               </AnimatePresence>
               
               <div className="absolute inset-0 pointer-events-none">
+                {/* Ghost Cursors */}
+                {Object.entries(memberCursors).map(([id, cursor]) => (
+                  <MotionDiv
+                    key={id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1, x: `${cursor.x}%`, y: `${cursor.y}%` }}
+                    className="absolute z-50 pointer-events-none"
+                    style={{ left: 0, top: 0 }}
+                  >
+                    <Ghost size={14} className="text-red-600/60" />
+                    <span className="absolute left-4 top-0 bg-black/60 text-[7px] font-black text-white px-1.5 py-0.5 rounded-full whitespace-nowrap">{cursor.name}</span>
+                  </MotionDiv>
+                ))}
+
                 {annotations.filter(a => a.pageIndex === currentPage).map(anno => (
                   <div key={anno.id} className="absolute pointer-events-auto cursor-pointer" onClick={() => setEditingAnnoId(anno.id)}
                     style={{ left: `${anno.x}%`, top: `${anno.y}%`, width: anno.width ? `${anno.width}%` : '0%', height: anno.height ? `${anno.height}%` : '0%', 
@@ -488,6 +1197,26 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, onBack, onStatsUpdat
           <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4 pointer-events-auto">
             <div className="bg-[#0b140b] border border-white/10 p-6 md:p-8 rounded-[2.5rem] w-full max-w-xs shadow-3xl">
               <div className="flex justify-between items-center mb-6"><h3 className="text-sm font-black italic uppercase text-white/50 tracking-widest">{t.soundscape}</h3><button onClick={() => setIsSoundPickerOpen(false)} className="hover:text-red-600 transition-colors"><X size={18}/></button></div>
+              
+              {/* Volume Slider */}
+              {activeSoundId !== 'none' && (
+                <div className="mb-6 px-2">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-white/30">{t.volume}</span>
+                    <span className="text-[9px] font-black text-red-600">{Math.round(volume * 100)}%</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="1" 
+                    step="0.01" 
+                    value={volume} 
+                    onChange={(e) => setVolume(parseFloat(e.target.value))}
+                    className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-red-600"
+                  />
+                </div>
+              )}
+
               <div className="grid gap-2 max-h-[50vh] overflow-y-auto no-scrollbar">
                 {SOUNDS.map(sound => (
                   <button key={sound.id} onClick={() => playSound(sound)} className={`flex items-center justify-between p-3 rounded-xl border transition-all ${activeSoundId === sound.id ? 'bg-red-600/20 border-red-600/50' : 'bg-white/5 border-transparent hover:bg-white/10'}`}>
