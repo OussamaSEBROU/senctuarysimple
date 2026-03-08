@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ViewState, Language, Insight } from './types';
 import type { Book, ShelfData } from './types';
 import { Layout } from './components/Layout';
@@ -71,12 +71,12 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleOnboardingComplete = useCallback(() => {
+  const handleOnboardingComplete = React.useCallback(() => {
     localStorage.setItem('sanctuary_onboarding_seen', 'true');
     setShowOnboarding(false);
   }, []);
 
-  const confirmDeleteBook = useCallback(async () => {
+  const confirmDeleteBook = React.useCallback(async () => {
     if (!bookToDelete || deleteConfirmInput !== 'امسح من المحراب') return;
     
     await pdfStorage.deleteFile(bookToDelete.id);
@@ -113,13 +113,13 @@ const App: React.FC = () => {
   }, []);
 
   const t = translations[lang];
-  const filteredBooks = useMemo(() => books.filter(b => b.shelfId === activeShelfId), [books, activeShelfId]);
+  const filteredBooks = React.useMemo(() => books.filter(b => b.shelfId === activeShelfId), [books, activeShelfId]);
   const fontClass = lang === 'ar' ? 'font-ar' : 'font-en';
 
-  const habitData = useMemo(() => storageService.getHabitData(), [books]);
+  const habitData = React.useMemo(() => storageService.getHabitData(), [books]);
   const habitStreak = habitData.streak;
 
-  const totalTodayMinutes = useMemo(() => {
+  const totalTodayMinutes = React.useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     return Math.floor(books.reduce((acc, b) => {
       if (b.lastReadDate === today) return acc + (b.dailyTimeSeconds || 0);
@@ -127,7 +127,7 @@ const App: React.FC = () => {
     }, 0) / 60);
   }, [books]);
 
-  const activeBookStats = useMemo(() => {
+  const activeBookStats = React.useMemo(() => {
     if (filteredBooks.length > 0 && filteredBooks[activeBookIndex]) {
       const book = filteredBooks[activeBookIndex];
       return {
@@ -139,7 +139,7 @@ const App: React.FC = () => {
   }, [filteredBooks, activeBookIndex]);
 
   const booksCount = books.length;
-  const insights = useMemo<Insight[]>(() => {
+  const insights = React.useMemo<Insight[]>(() => {
     const list: Insight[] = [];
     const isRTL = lang === 'ar';
     const streak = habitData.streak;
