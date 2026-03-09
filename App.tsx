@@ -328,8 +328,15 @@ const App: React.FC = () => {
   };
 
   const handleReaderBack = React.useCallback(() => {
-    setBooks(storageService.getBooks());
+    console.log("App: handleReaderBack triggered");
+    const updatedBooks = storageService.getBooks();
+    setBooks(updatedBooks);
+    setSelectedBook(null);
     setView(ViewState.SHELF);
+    // Force a small delay to ensure state updates before any other interactions
+    setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 100);
   }, []);
 
   const handleStatsUpdate = React.useCallback((starReached?: number | null) => {
