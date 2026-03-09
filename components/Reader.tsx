@@ -134,10 +134,25 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
   const fontClass = isRTL ? 'font-ar' : 'font-en';
 
   // Force back function to be globally accessible for debugging or emergency triggers
-  const forceBack = () => {
+  const forceBack = React.useCallback(() => {
     console.log("Force Back Triggered");
     onBack();
-  };
+  }, [onBack]);
+
+  useEffect(() => {
+    // Native event listener as a failsafe
+    const handleNativeClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('#reader-back-button')) {
+        console.log("Native: Back button clicked");
+        e.preventDefault();
+        e.stopPropagation();
+        forceBack();
+      }
+    };
+    document.addEventListener('click', handleNativeClick, true);
+    return () => document.removeEventListener('click', handleNativeClick, true);
+  }, [forceBack]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -944,22 +959,23 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
           <MotionHeader initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} 
             className="fixed top-0 left-0 right-0 p-2 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto"
           >
-            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto relative z-[99999]">
+            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto relative z-[999999]">
               {!roomId ? (
                 <button 
                   id="reader-back-button"
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    console.log("React: Back button clicked");
                     onBack();
                   }} 
-                  className="group flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-white/5 hover:bg-red-600/20 border border-white/10 hover:border-red-600/50 rounded-xl transition-all active:scale-95 relative z-[100000] pointer-events-auto cursor-pointer" 
-                  style={{ isolation: 'isolate' }}
+                  className="group flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-white/10 hover:bg-red-600 border border-white/20 hover:border-red-500 rounded-xl transition-all active:scale-95 relative z-[1000000] pointer-events-auto cursor-pointer shadow-2xl" 
+                  style={{ isolation: 'isolate', touchAction: 'manipulation' }}
                   title={isRTL ? "العودة للمحراب" : "Back to Sanctuary"}
                 >
-                  <Home size={18} className="text-white/60 group-hover:text-red-500 transition-colors" />
-                  <div className="h-4 w-[1px] bg-white/10 group-hover:bg-red-600/30" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-white/40 group-hover:text-white transition-colors">
+                  <Home size={18} className="text-white group-hover:text-white transition-colors" />
+                  <div className="h-4 w-[1px] bg-white/20 group-hover:bg-white/40" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-white group-hover:text-white transition-colors">
                     {isRTL ? "المحراب" : "Sanctuary"}
                   </span>
                 </button>
