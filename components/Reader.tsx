@@ -132,6 +132,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
   const isRTL = lang === 'ar';
   const fontClass = isRTL ? 'font-ar' : 'font-en';
 
+  // Force back function to be globally accessible for debugging or emergency triggers
+  const forceBack = () => {
+    console.log("Force Back Triggered");
+    onBack();
+  };
+
   useEffect(() => {
     if (!roomId) return;
     const interval = setInterval(() => {
@@ -407,9 +413,19 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
   useEffect(() => {
     const handleFsChange = () => { if (!document.fullscreenElement && isZenMode) setIsZenMode(false); };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isZenMode) setIsZenMode(false);
+        else onBack();
+      }
+    };
     document.addEventListener('fullscreenchange', handleFsChange);
-    return () => document.removeEventListener('fullscreenchange', handleFsChange);
-  }, [isZenMode]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isZenMode, onBack]);
 
   useEffect(() => {
     // Handle speaker toggle
@@ -927,25 +943,37 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
           <MotionHeader initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} 
             className="fixed top-0 left-0 right-0 p-2 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto"
           >
-            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto relative z-[9999]">
+            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto relative z-[99999]">
               {!roomId ? (
                 <button 
+                  id="reader-back-button"
                   onClick={(e) => {
+                    e.preventDefault();
                     e.stopPropagation();
+                    console.log("Back button clicked");
                     onBack();
                   }} 
-                  className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/60 hover:bg-white/10 hover:bg-red-600/20 hover:border-red-600/50 active:scale-90 shrink-0 border border-white/10 transition-all relative z-[10000] pointer-events-auto" 
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                  }}
+                  className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/10 rounded-full text-white hover:bg-red-600 transition-all active:scale-90 shrink-0 border border-white/20 relative z-[100000] pointer-events-auto cursor-pointer" 
+                  style={{ isolation: 'isolate' }}
                   title={isRTL ? "العودة" : "Back"}
                 >
-                  <ArrowLeft size={16} className={isRTL ? "rotate-180" : ""} />
+                  <ArrowLeft size={20} className={isRTL ? "rotate-180" : ""} />
                 </button>
               ) : (
                 <button 
                   onClick={(e) => {
+                    e.preventDefault();
                     e.stopPropagation();
                     onBack();
                   }} 
-                  className="flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2.5 bg-red-600/10 text-red-500 rounded-full hover:bg-red-600 hover:text-white transition-all group active:scale-95 shrink-0 relative z-[10000] pointer-events-auto"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2.5 bg-red-600 text-white rounded-full hover:bg-red-700 transition-all group active:scale-95 shrink-0 relative z-[100000] pointer-events-auto cursor-pointer"
+                  style={{ isolation: 'isolate' }}
                 >
                   <PhoneOff size={14} className="md:size-5" />
                   <span className="text-[9px] md:text-xs font-black uppercase tracking-widest">{isRTL ? 'مغادرة' : 'Leave'}</span>
