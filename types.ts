@@ -68,3 +68,11 @@ export interface Insight {
   color: string;
   isShining?: boolean;
 }
+
+export interface ChatMessage {
+  id: string;
+  text: string;
+  senderId: string;
+  senderName: string;
+  timestamp?: number;
+}
