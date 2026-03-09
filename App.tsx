@@ -498,10 +498,10 @@ const App: React.FC = () => {
         </AnimatePresence>
 
         {/* Global Fixed Controls - Elevated z-index to ensure visibility and clickability */}
-        <div className="fixed top-0 left-0 right-0 z-[3000] p-3 md:p-8 pointer-events-none flex justify-between items-center">
+        <div className={`fixed top-0 left-0 right-0 p-3 md:p-8 pointer-events-none flex justify-between items-center ${view === ViewState.READER ? 'z-[1000]' : 'z-[3000]'}`}>
           <button 
             onClick={() => setIsSidebarOpen(true)} 
-            className="p-3 md:p-5 rounded-full bg-black/60 backdrop-blur-2xl border border-white/10 pointer-events-auto hover:bg-[#ff0000] hover:border-[#ff0000] transition-all shadow-2xl group active:scale-95 z-[3001]"
+            className={`p-3 md:p-5 rounded-full bg-black/60 backdrop-blur-2xl border border-white/10 pointer-events-auto hover:bg-[#ff0000] hover:border-[#ff0000] transition-all shadow-2xl group active:scale-95 z-[3001] ${view === ViewState.READER ? 'hidden' : ''}`}
           >
             <Menu size={18} className="group-hover:text-white text-white/40 md:size-6"/>
           </button>
