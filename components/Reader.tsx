@@ -150,7 +150,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
   useEffect(() => {
     if (!socket || !roomId) return;
 
-    socket.on("pdf-requested", async ({ bookId, requesterId }) => {
+    socket.on("pdf-requested", async ({ bookId, requesterId }: { bookId: string, requesterId: string }) => {
       if (isAdmin && bookId === book.id) {
         console.log("Admin: PDF requested by", requesterId);
         const data = await pdfStorage.getFile(bookId);
@@ -160,7 +160,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       }
     });
 
-    socket.on("pdf-received", async ({ bookId, pdfData }) => {
+    socket.on("pdf-received", async ({ bookId, pdfData }: { bookId: string, pdfData: any }) => {
       if (bookId === book.id) {
         console.log("Joiner: PDF received!");
         await pdfStorage.saveFile(bookId, pdfData);
@@ -183,7 +183,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
     setupVoice();
 
-    socket.on("room-updated", (data) => {
+    socket.on("room-updated", (data: any) => {
       setMembers(data.members);
       
       // Handle new members for voice chat
@@ -197,7 +197,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       }
     });
 
-    socket.on("voice-signal", ({ from, signal }) => {
+    socket.on("voice-signal", ({ from, signal }: { from: string, signal: any }) => {
       const peer = peersRef.current[from];
       if (peer) {
         peer.signal(signal);
@@ -219,11 +219,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
         stream: combinedStream,
       });
 
-      peer.on("signal", signal => {
+      peer.on("signal", (signal: any) => {
         socket.emit("send-voice-signal", { userToSignal, signal, from: userId });
       });
 
-      peer.on("stream", stream => {
+      peer.on("stream", (stream: MediaStream) => {
         if (stream.getVideoTracks().length > 0) {
           setRemoteScreenStream(stream);
         }
@@ -253,11 +253,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
         stream: combinedStream,
       });
 
-      peer.on("signal", signal => {
+      peer.on("signal", (signal: any) => {
         socket.emit("return-voice-signal", { signal, to: callerId, from: userId });
       });
 
-      peer.on("stream", stream => {
+      peer.on("stream", (stream: MediaStream) => {
         if (stream.getVideoTracks().length > 0) {
           setRemoteScreenStream(stream);
         }
@@ -276,26 +276,26 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       setPeers(prev => ({ ...prev, [callerId]: peer }));
     };
 
-    socket.on("member-moved", ({ id, page }) => {
+    socket.on("member-moved", ({ id, page }: { id: string, page: number }) => {
       setMembers(prev => prev.map(m => m.id === id ? { ...m, currentPage: page } : m));
     });
 
-    socket.on("member-cursor", ({ id, cursor }) => {
+    socket.on("member-cursor", ({ id, cursor }: { id: string, cursor: { x: number, y: number } }) => {
       const member = members.find(m => m.id === id);
       if (member) {
         setMemberCursors(prev => ({ ...prev, [id]: { ...cursor, name: member.name } }));
       }
     });
 
-    socket.on("new-highlight", (highlight) => {
+    socket.on("new-highlight", (highlight: Annotation) => {
       setAnnotations(prev => [...prev, highlight]);
     });
 
-    socket.on("new-chat", (msg) => {
+    socket.on("new-chat", (msg: ChatMessage) => {
       setChatMessages(prev => [...prev, msg]);
     });
 
-    socket.on("new-reaction", ({ id, reaction }) => {
+    socket.on("new-reaction", ({ id, reaction }: { id: string, reaction: string }) => {
       const member = members.find(m => m.id === id);
       const newReaction = { id: Math.random(), emoji: reaction, name: member?.name || '...' };
       setActiveReactions(prev => [...prev, newReaction]);
@@ -304,11 +304,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       }, 3000);
     });
 
-    socket.on("summoned", (page) => {
+    socket.on("summoned", (page: number) => {
       handlePageChange(page);
     });
 
-    socket.on("mic-status-changed", ({ id, active }) => {
+    socket.on("mic-status-changed", ({ id, active }: { id: string, active: boolean }) => {
       setSpeakingMembers(prev => {
         const next = new Set(prev);
         if (active) next.add(id);
@@ -317,7 +317,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       });
     });
 
-    socket.on("hand-raised", ({ id, raised }) => {
+    socket.on("hand-raised", ({ id, raised }: { id: string, raised: boolean }) => {
       setMembers(prev => prev.map(m => m.id === id ? { ...m, isHandRaised: raised } : m));
       if (raised) {
         const member = members.find(m => m.id === id);
@@ -370,7 +370,15 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
   const sendChat = (e: React.FormEvent) => {
     e.preventDefault();
     if (!socket || !roomId || !chatInput.trim()) return;
-    socket.emit("send-chat", { roomId, message: { text: chatInput, name: lang === 'ar' ? 'أنا' : 'Me' } });
+    socket.emit("send-chat", { 
+      roomId, 
+      message: { 
+        id: Math.random().toString(36).substr(2, 9),
+        text: chatInput, 
+        senderId: socket.id,
+        senderName: lang === 'ar' ? 'أنا' : 'Me' 
+      } 
+    });
     setChatInput('');
   };
 
