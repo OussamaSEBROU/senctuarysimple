@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ViewState, Language, Insight } from './types';
 import type { Book, ShelfData } from './types';
