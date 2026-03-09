@@ -31,7 +31,7 @@ const ANALYTICAL_COLORS = [
   '#ef4444'  // Sanctuary Red
 ];
 
-export const Dashboard: React.FC<DashboardProps> = React.memo(({ books, shelves, lang, onBack }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ books, shelves, lang, onBack }) => {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const t = translations[lang];
   const isRTL = lang === 'ar';
@@ -757,4 +757,4 @@ export const Dashboard: React.FC<DashboardProps> = React.memo(({ books, shelves,
       </AnimatePresence>
     </MotionDiv>
   );
-});
+};
