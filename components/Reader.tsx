@@ -927,9 +927,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
           <MotionHeader initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} 
             className="fixed top-0 left-0 right-0 p-2 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto"
           >
-            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto">
+            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto relative z-[2000]">
               {!roomId ? (
-                <button onClick={onBack} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/60 hover:bg-white/10 hover:bg-red-600/20 hover:border-red-600/50 active:scale-90 shrink-0 border border-white/10 transition-all" title={isRTL ? "العودة" : "Back"}>
+                <button onClick={onBack} className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/5 rounded-full text-white/60 hover:bg-white/10 hover:bg-red-600/20 hover:border-red-600/50 active:scale-90 shrink-0 border border-white/10 transition-all relative z-[2001]" title={isRTL ? "العودة" : "Back"}>
                   <ArrowLeft size={16} className={isRTL ? "rotate-180" : ""} />
                 </button>
               ) : (
