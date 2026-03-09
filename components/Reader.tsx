@@ -1033,6 +1033,24 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
         {!isLoading && (
           <div className={`relative w-full h-full flex items-center justify-center overflow-hidden ${isZenMode ? 'p-0' : 'p-6'}`}>
+            {/* Desktop Side Navigation Buttons */}
+            {!isZenMode && (
+              <>
+                <button 
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  className={`fixed left-4 md:left-8 top-1/2 -translate-y-1/2 z-[1000] w-10 h-10 md:w-14 md:h-14 flex items-center justify-center bg-black/40 backdrop-blur-xl border border-white/10 rounded-full text-white/40 hover:text-white hover:bg-red-600/20 hover:border-red-600/50 transition-all active:scale-90 group hidden md:flex ${currentPage === 0 ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+                >
+                  <ChevronLeft size={24} className={isRTL ? "rotate-180" : ""} />
+                </button>
+                <button 
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  className={`fixed right-4 md:right-8 top-1/2 -translate-y-1/2 z-[1000] w-10 h-10 md:w-14 md:h-14 flex items-center justify-center bg-black/40 backdrop-blur-xl border border-white/10 rounded-full text-white/40 hover:text-white hover:bg-red-600/20 hover:border-red-600/50 transition-all active:scale-90 group hidden md:flex ${currentPage === totalPages - 1 ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+                >
+                  <ChevronRight size={24} className={isRTL ? "rotate-180" : ""} />
+                </button>
+              </>
+            )}
+
             <MotionDiv 
               ref={pageRef} 
               drag={activeTool === 'view' ? "x" : false}
