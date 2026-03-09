@@ -15,7 +15,8 @@ import {
   Edit3, Sun, Clock, BoxSelect, Palette, Check, LayoutGrid,
   FileAudio, Users, Send, MessageCircle, Share2, Zap,
   Mic, MicOff, Hand, Ghost, BookOpen,
-  PhoneOff, Video, VideoOff, MoreVertical, Monitor, ArrowLeft
+  PhoneOff, Video, VideoOff, MoreVertical, Monitor, ArrowLeft,
+  Home, ChevronRight as ChevronRightIcon
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import { ChatMessage } from '../types';
@@ -950,17 +951,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    console.log("Back button clicked");
                     onBack();
                   }} 
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                  }}
-                  className="w-8 h-8 md:w-11 md:h-11 flex items-center justify-center bg-white/10 rounded-full text-white hover:bg-red-600 transition-all active:scale-90 shrink-0 border border-white/20 relative z-[100000] pointer-events-auto cursor-pointer" 
+                  className="group flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-white/5 hover:bg-red-600/20 border border-white/10 hover:border-red-600/50 rounded-xl transition-all active:scale-95 relative z-[100000] pointer-events-auto cursor-pointer" 
                   style={{ isolation: 'isolate' }}
-                  title={isRTL ? "العودة" : "Back"}
+                  title={isRTL ? "العودة للمحراب" : "Back to Sanctuary"}
                 >
-                  <ArrowLeft size={20} className={isRTL ? "rotate-180" : ""} />
+                  <Home size={18} className="text-white/60 group-hover:text-red-500 transition-colors" />
+                  <div className="h-4 w-[1px] bg-white/10 group-hover:bg-red-600/30" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-white/40 group-hover:text-white transition-colors">
+                    {isRTL ? "المحراب" : "Sanctuary"}
+                  </span>
                 </button>
               ) : (
                 <button 
