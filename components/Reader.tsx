@@ -1,9 +1,8 @@
 
 // Version: 1.1.0 - Refined Header & Session Mode
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Language } from '../types';
-import type { Book, Annotation } from '../types';
+import type { Language, Book, ChatMessage, Annotation } from '../types';
 import { translations } from '../i18n/translations';
 import { storageService } from '../services/storageService';
 import { pdfStorage } from '../services/pdfStorage';
@@ -15,11 +14,9 @@ import {
   Edit3, Sun, Clock, BoxSelect, Palette, Check, LayoutGrid,
   FileAudio, Users, Send, MessageCircle, Share2, Zap,
   Mic, MicOff, Hand, Ghost, BookOpen,
-  PhoneOff, Video, VideoOff, MoreVertical, Monitor, ArrowLeft,
-  Home, ChevronRight as ChevronRightIcon
+  PhoneOff, Video, VideoOff, MoreVertical, Monitor, ArrowLeft
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
-import { ChatMessage } from '../types';
 import Peer from 'simple-peer';
 
 declare const pdfjsLib: any;
@@ -36,6 +33,44 @@ interface ReaderProps {
   socket?: Socket | null;
   roomId?: string | null;
   roomData?: any;
+}
+
+interface RoomMember {
+  id: string;
+  name: string;
+  currentPage: number;
+  isMicActive?: boolean;
+  isHandRaised?: boolean;
+}
+
+interface VoiceSignalPayload {
+  from: string;
+  signal: any;
+}
+
+interface MemberMovedPayload {
+  id: string;
+  page: number;
+}
+
+interface MemberCursorPayload {
+  id: string;
+  cursor: { x: number, y: number };
+}
+
+interface NewReactionPayload {
+  id: string;
+  reaction: string;
+}
+
+interface MicStatusPayload {
+  id: string;
+  active: boolean;
+}
+
+interface HandRaisedPayload {
+  id: string;
+  raised: boolean;
 }
 
 type Tool = 'view' | 'highlight' | 'underline' | 'box' | 'note';
@@ -133,14 +168,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
   const isRTL = lang === 'ar';
   const fontClass = isRTL ? 'font-ar' : 'font-en';
 
-  // Force back function to be globally accessible for debugging or emergency triggers
-  const forceBack = React.useCallback(() => {
-    console.log("Force Back Triggered");
-    onBack();
-  }, [onBack]);
-
-  // Back button handler is now directly attached to the button component for better React compatibility.
-
   useEffect(() => {
     if (!roomId) return;
     const interval = setInterval(() => {
@@ -169,7 +196,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       }
     });
 
-    socket.on("pdf-received", async ({ bookId, pdfData }: { bookId: string, pdfData: any }) => {
+    socket.on("pdf-received", async ({ bookId, pdfData }: { bookId: string, pdfData: ArrayBuffer }) => {
       if (bookId === book.id) {
         console.log("Joiner: PDF received!");
         await pdfStorage.saveFile(bookId, pdfData);
@@ -192,12 +219,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
     setupVoice();
 
-    socket.on("room-updated", (data: any) => {
+    socket.on("room-updated", (data: { members: RoomMember[] }) => {
       setMembers(data.members);
       
       // Handle new members for voice chat
       if (streamRef.current) {
-        data.members.forEach((member: any) => {
+        data.members.forEach((member: RoomMember) => {
           if (member.id !== userId && !peersRef.current[member.id]) {
             // Create peer for new member
             createPeer(member.id, streamRef.current!);
@@ -206,7 +233,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       }
     });
 
-    socket.on("voice-signal", ({ from, signal }: { from: string, signal: any }) => {
+    socket.on("voice-signal", ({ from, signal }: VoiceSignalPayload) => {
       const peer = peersRef.current[from];
       if (peer) {
         peer.signal(signal);
@@ -285,11 +312,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       setPeers(prev => ({ ...prev, [callerId]: peer }));
     };
 
-    socket.on("member-moved", ({ id, page }: { id: string, page: number }) => {
+    socket.on("member-moved", ({ id, page }: MemberMovedPayload) => {
       setMembers(prev => prev.map(m => m.id === id ? { ...m, currentPage: page } : m));
     });
 
-    socket.on("member-cursor", ({ id, cursor }: { id: string, cursor: { x: number, y: number } }) => {
+    socket.on("member-cursor", ({ id, cursor }: MemberCursorPayload) => {
       const member = members.find(m => m.id === id);
       if (member) {
         setMemberCursors(prev => ({ ...prev, [id]: { ...cursor, name: member.name } }));
@@ -379,15 +406,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
   const sendChat = (e: React.FormEvent) => {
     e.preventDefault();
     if (!socket || !roomId || !chatInput.trim()) return;
-    socket.emit("send-chat", { 
-      roomId, 
-      message: { 
-        id: Math.random().toString(36).substr(2, 9),
-        text: chatInput, 
-        senderId: socket.id,
-        senderName: lang === 'ar' ? 'أنا' : 'Me' 
-      } 
-    });
+    socket.emit("send-chat", { roomId, message: { text: chatInput, name: lang === 'ar' ? 'أنا' : 'Me' } });
     setChatInput('');
   };
 
@@ -416,19 +435,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
   useEffect(() => {
     const handleFsChange = () => { if (!document.fullscreenElement && isZenMode) setIsZenMode(false); };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (isZenMode) setIsZenMode(false);
-        else onBack();
-      }
-    };
     document.addEventListener('fullscreenchange', handleFsChange);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFsChange);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isZenMode, onBack]);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, [isZenMode]);
 
   useEffect(() => {
     // Handle speaker toggle
@@ -454,12 +463,17 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
     else { setShowControls(true); if (controlsTimeoutRef.current) window.clearTimeout(controlsTimeoutRef.current); }
   }, [isZenMode]);
 
-  const handleUserActivity = () => {
+  const lastActivityRef = useRef<number>(0);
+  const handleUserActivity = useCallback(() => {
     if (!isZenMode) return;
+    const now = Date.now();
+    if (now - lastActivityRef.current < 100) return; // Throttle to 100ms
+    lastActivityRef.current = now;
+
     setShowControls(true);
     if (controlsTimeoutRef.current) window.clearTimeout(controlsTimeoutRef.current);
     controlsTimeoutRef.current = window.setTimeout(() => { setShowControls(false); }, 4500);
-  };
+  }, [isZenMode]);
 
   useEffect(() => {
     const loadPdf = async () => {
@@ -483,22 +497,51 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
         
         const renderSinglePage = async (idx: number) => {
           if (idx < 0 || idx >= pdf.numPages || tempPages[idx]) return;
-          const p = await pdf.getPage(idx + 1);
-          const vp = p.getViewport({ scale: 1.5 });
-          const cv = document.createElement('canvas');
-          cv.height = vp.height; cv.width = vp.width;
-          await p.render({ canvasContext: cv.getContext('2d')!, viewport: vp }).promise;
-          tempPages[idx] = cv.toDataURL('image/jpeg', 0.8);
-          setPages([...tempPages]);
+          try {
+            const p = await pdf.getPage(idx + 1);
+            const vp = p.getViewport({ scale: 1.5 });
+            const cv = document.createElement('canvas');
+            cv.height = vp.height; cv.width = vp.width;
+            await p.render({ canvasContext: cv.getContext('2d')!, viewport: vp }).promise;
+            tempPages[idx] = cv.toDataURL('image/jpeg', 0.8);
+            return tempPages[idx];
+          } catch (e) {
+            console.error("Error rendering page", idx, e);
+            return null;
+          }
         };
 
+        // 1. Render current page immediately
         await renderSinglePage(currentPage);
+        setPages([...tempPages]);
         setIsLoading(false);
         setIsPdfLoading(false);
 
+        // 2. Render neighbors for smooth transition
+        const neighbors = [currentPage - 1, currentPage + 1];
+        for (const n of neighbors) {
+          if (n >= 0 && n < pdf.numPages) {
+            await renderSinglePage(n);
+          }
+        }
+        setPages([...tempPages]);
+
+        // 3. Render the rest in chunks to avoid UI freezing and excessive re-renders
         const loadRest = async () => {
-          for (let i = 0; i < pdf.numPages; i++) {
-            if (!tempPages[i]) await renderSinglePage(i);
+          const CHUNK_SIZE = 5;
+          for (let i = 0; i < pdf.numPages; i += CHUNK_SIZE) {
+            let chunkUpdated = false;
+            for (let j = i; j < i + CHUNK_SIZE && j < pdf.numPages; j++) {
+              if (!tempPages[j]) {
+                await renderSinglePage(j);
+                chunkUpdated = true;
+              }
+            }
+            if (chunkUpdated) {
+              setPages([...tempPages]);
+              // Yield to main thread
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
           }
         };
         loadRest();
@@ -724,6 +767,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       <AnimatePresence>
         {remoteScreenStream && (
           <MotionDiv 
+            key="remote-stream"
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
             exit={{ opacity: 0 }} 
@@ -754,6 +798,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       <AnimatePresence>
         {isChatOpen && (
           <MotionDiv 
+            key="chat"
             initial={{ x: isRTL ? -400 : 400 }} 
             animate={{ x: 0 }} 
             exit={{ x: isRTL ? -400 : 400 }} 
@@ -792,9 +837,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
             </form>
           </MotionDiv>
         )}
+      </AnimatePresence>
 
+      <AnimatePresence>
         {isMembersListOpen && (
           <MotionDiv 
+            key="members-list"
             initial={{ y: '100%' }} 
             animate={{ y: 0 }} 
             exit={{ y: '100%' }} 
@@ -930,7 +978,9 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
             </div>
           </MotionDiv>
         )}
+      </AnimatePresence>
 
+      <AnimatePresence>
         {isLoading && !remoteScreenStream && (
           <MotionDiv key="loading-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[5000] bg-black flex flex-col items-center justify-center p-8 text-center pointer-events-none">
             <div className="w-12 h-12 rounded-full border-2 border-white/5 border-t-red-600 animate-spin mb-6" />
@@ -943,16 +993,27 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
       <AnimatePresence>
         {showControls && (
-          <MotionHeader initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} 
+          <MotionHeader key="header" initial={{ y: -100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -100, opacity: 0 }} 
             className="fixed top-0 left-0 right-0 p-2 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto"
           >
-            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto relative z-[999999]">
-              {roomId && (
+            <div className="flex items-center gap-2 md:gap-4 pointer-events-auto">
+              {!roomId ? (
                 <button 
-                  onClick={onBack} 
-                  className="flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2.5 bg-red-600 text-white rounded-full hover:bg-red-700 transition-all group active:scale-95 shrink-0 relative z-[100000] pointer-events-auto cursor-pointer"
-                  style={{ isolation: 'isolate' }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('Back button clicked');
+                    onBack();
+                  }} 
+                  style={{ pointerEvents: 'auto', zIndex: 9999, position: 'relative' }}
+                  className="flex items-center gap-2 px-4 py-2 md:px-6 md:py-3 bg-gradient-to-r from-red-600/20 to-orange-500/20 text-white rounded-full hover:from-red-600/40 hover:to-orange-500/40 transition-all group active:scale-95 shrink-0 border border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.2)] hover:shadow-[0_0_25px_rgba(239,68,68,0.4)] relative overflow-hidden cursor-pointer"
                 >
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out pointer-events-none" />
+                  <ArrowLeft size={16} className={`md:size-5 transition-transform group-hover:-translate-x-1 ${isRTL ? "rotate-180 group-hover:translate-x-1 group-hover:-translate-x-0" : ""} pointer-events-none`} />
+                  <span className="text-[10px] md:text-xs font-black uppercase tracking-[0.2em] relative z-10 pointer-events-none">{isRTL ? 'المحراب' : 'Sanctuary'}</span>
+                </button>
+              ) : (
+                <button onClick={onBack} className="flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2.5 bg-red-600/10 text-red-500 rounded-full hover:bg-red-600 hover:text-white transition-all group active:scale-95 shrink-0">
                   <PhoneOff size={14} className="md:size-5" />
                   <span className="text-[9px] md:text-xs font-black uppercase tracking-widest">{isRTL ? 'مغادرة' : 'Leave'}</span>
                 </button>
@@ -1037,7 +1098,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       <main className="flex-1 flex items-center justify-center bg-black relative overflow-hidden" ref={containerRef}>
         <AnimatePresence>
           {isThumbnailsOpen && (
-            <MotionDiv initial={{ x: -100, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -100, opacity: 0 }} className="fixed left-0 top-0 bottom-0 w-24 md:w-32 bg-black/80 backdrop-blur-2xl z-[1500] border-r border-white/5 flex flex-col pt-24 pb-8 overflow-y-auto no-scrollbar scroll-smooth">
+            <MotionDiv key="thumbnails" initial={{ x: -100, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -100, opacity: 0 }} className="fixed left-0 top-0 bottom-0 w-24 md:w-32 bg-black/80 backdrop-blur-2xl z-[1500] border-r border-white/5 flex flex-col pt-24 pb-8 overflow-y-auto no-scrollbar scroll-smooth">
               {pages.map((p, idx) => (
                 <button key={idx} onClick={() => handlePageChange(idx)} className={`p-2 md:p-3 transition-all ${currentPage === idx ? 'scale-110 brightness-125' : 'opacity-40 hover:opacity-100 grayscale hover:grayscale-0'}`}>
                   <div className={`aspect-[1/1.4] bg-white rounded-lg overflow-hidden border-2 transition-all ${currentPage === idx ? 'border-red-600 shadow-[0_0_15px_rgba(255,0,0,0.5)]' : 'border-transparent'}`}>
@@ -1052,24 +1113,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
         {!isLoading && (
           <div className={`relative w-full h-full flex items-center justify-center overflow-hidden ${isZenMode ? 'p-0' : 'p-6'}`}>
-            {/* Desktop Side Navigation Buttons */}
-            {!isZenMode && (
-              <>
-                <button 
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  className={`fixed left-4 md:left-8 top-1/2 -translate-y-1/2 z-[1000] w-10 h-10 md:w-14 md:h-14 flex items-center justify-center bg-black/40 backdrop-blur-xl border border-white/10 rounded-full text-white/40 hover:text-white hover:bg-red-600/20 hover:border-red-600/50 transition-all active:scale-90 group hidden md:flex ${currentPage === 0 ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-                >
-                  <ChevronLeft size={24} className={isRTL ? "rotate-180" : ""} />
-                </button>
-                <button 
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  className={`fixed right-4 md:right-8 top-1/2 -translate-y-1/2 z-[1000] w-10 h-10 md:w-14 md:h-14 flex items-center justify-center bg-black/40 backdrop-blur-xl border border-white/10 rounded-full text-white/40 hover:text-white hover:bg-red-600/20 hover:border-red-600/50 transition-all active:scale-90 group hidden md:flex ${currentPage === totalPages - 1 ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-                >
-                  <ChevronRight size={24} className={isRTL ? "rotate-180" : ""} />
-                </button>
-              </>
-            )}
-
             <MotionDiv 
               ref={pageRef} 
               drag={activeTool === 'view' ? "x" : false}
@@ -1147,11 +1190,11 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
       <div className="fixed bottom-6 left-0 right-0 z-[2000] pointer-events-none px-6 flex flex-col items-center gap-4">
         <AnimatePresence>
           {showControls && (
-            <MotionDiv initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="flex flex-col items-center gap-4 pointer-events-auto">
+            <MotionDiv key="bottom-controls" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="flex flex-col items-center gap-4 pointer-events-auto">
               
               <AnimatePresence>
                 {isToolsOpen && (
-                  <MotionDiv initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="bg-black/80 backdrop-blur-3xl border border-white/10 px-4 py-2 rounded-full shadow-4xl flex items-center gap-3 mb-2">
+                  <MotionDiv key="tools" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="bg-black/80 backdrop-blur-3xl border border-white/10 px-4 py-2 rounded-full shadow-4xl flex items-center gap-3 mb-2">
                     {(Object.keys(TOOL_ICONS) as Tool[]).map(tool => {
                       const Icon = TOOL_ICONS[tool];
                       const isActive = activeTool === tool;
@@ -1193,7 +1236,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
 
       <AnimatePresence>
         {isGoToPageOpen && (
-          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-6 pointer-events-auto">
+          <MotionDiv key="goto-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-6 pointer-events-auto">
             <MotionDiv initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-[#0b140b] border border-white/10 p-8 rounded-[2.5rem] w-full max-w-xs shadow-5xl text-center">
               <h3 className="text-sm font-black uppercase mb-6 tracking-widest text-white/40">{t.goToPage}</h3>
               <form onSubmit={jumpToPage}>
@@ -1205,7 +1248,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
         )}
 
         {isSoundPickerOpen && (
-          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4 pointer-events-auto">
+          <MotionDiv key="sound-picker" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4 pointer-events-auto">
             <div className="bg-[#0b140b] border border-white/10 p-6 md:p-8 rounded-[2.5rem] w-full max-w-xs shadow-3xl">
               <div className="flex justify-between items-center mb-6"><h3 className="text-sm font-black italic uppercase text-white/50 tracking-widest">{t.soundscape}</h3><button onClick={() => setIsSoundPickerOpen(false)} className="hover:text-red-600 transition-colors"><X size={18}/></button></div>
               
@@ -1246,7 +1289,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
         )}
 
         {isArchiveOpen && (
-          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/40 backdrop-blur-[40px] p-6 flex items-center justify-center pointer-events-auto">
+          <MotionDiv key="archive" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[2000] bg-black/40 backdrop-blur-[40px] p-6 flex items-center justify-center pointer-events-auto">
              <MotionDiv initial={{ y: 50 }} animate={{ y: 0 }} className="w-full max-w-xl bg-[#0b140b] border border-white/10 rounded-[2.5rem] p-6 max-h-[70vh] overflow-hidden flex flex-col shadow-4xl">
                 <div className="flex justify-between items-center mb-6 shrink-0">
                   <h2 className="text-lg font-black italic uppercase tracking-tighter text-white/60">{t.wisdomIndex}</h2>
@@ -1272,7 +1315,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
         )}
 
         {editingAnnoId && currentEditingAnno && (
-          <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[4000] bg-black/60 backdrop-blur-xl flex items-center justify-center p-6 pointer-events-auto">
+          <MotionDiv key="editing-anno" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[4000] bg-black/60 backdrop-blur-xl flex items-center justify-center p-6 pointer-events-auto">
             <MotionDiv initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-black/40 backdrop-blur-2xl border border-white/10 p-5 rounded-[2rem] w-full max-w-[300px] shadow-5xl flex flex-col">
               <div className="flex items-center justify-between mb-4">
                  <div className="flex items-center gap-2">
@@ -1294,28 +1337,6 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
           </MotionDiv>
         )}
       </AnimatePresence>
-
-      {/* Modern Floating Back Button - Only when not in a room */}
-      {!roomId && (
-        <motion.button
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0, opacity: 0 }}
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={onBack}
-          className="fixed bottom-8 left-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-red-600 to-red-700 text-white shadow-2xl shadow-red-600/50 flex items-center justify-center z-[999999] pointer-events-auto cursor-pointer border border-red-500/50 hover:shadow-red-600/70 transition-all group"
-          style={{ isolation: 'isolate', touchAction: 'manipulation' }}
-          title={isRTL ? "العودة للمحراب" : "Back to Sanctuary"}
-        >
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'linear' }}
-            className="absolute inset-0 rounded-full border border-red-400/20 group-hover:border-red-400/40"
-          />
-          <ArrowLeft size={24} className={`text-white relative z-10 ${isRTL ? 'rotate-180' : ''}`} />
-        </motion.button>
-      )}
     </div>
   );
 };
