@@ -947,21 +947,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
             className="fixed top-0 left-0 right-0 p-2 md:p-6 flex items-center justify-between z-[1100] bg-black/80 backdrop-blur-2xl border-b border-white/10 pointer-events-auto"
           >
             <div className="flex items-center gap-2 md:gap-4 pointer-events-auto relative z-[999999]">
-              {!roomId ? (
-                <button 
-                  id="reader-back-button"
-                  onClick={onBack} 
-                  className="group flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-white/10 hover:bg-red-600 border border-white/20 hover:border-red-500 rounded-xl transition-all active:scale-95 relative z-[1000000] pointer-events-auto cursor-pointer shadow-2xl" 
-                  style={{ isolation: 'isolate', touchAction: 'auto' }}
-                  title={isRTL ? "العودة للمحراب" : "Back to Sanctuary"}
-                >
-                  <ArrowLeft size={18} className={`text-white group-hover:text-white transition-colors ${isRTL ? 'rotate-180' : ''}`} />
-                  <div className="h-4 w-[1px] bg-white/20 group-hover:bg-white/40" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-white group-hover:text-white transition-colors">
-                    {isRTL ? "المحراب" : "Sanctuary"}
-                  </span>
-                </button>
-              ) : (
+              {roomId && (
                 <button 
                   onClick={onBack} 
                   className="flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2.5 bg-red-600 text-white rounded-full hover:bg-red-700 transition-all group active:scale-95 shrink-0 relative z-[100000] pointer-events-auto cursor-pointer"
@@ -1308,6 +1294,28 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
           </MotionDiv>
         )}
       </AnimatePresence>
+
+      {/* Modern Floating Back Button - Only when not in a room */}
+      {!roomId && (
+        <motion.button
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0, opacity: 0 }}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={onBack}
+          className="fixed bottom-8 left-8 w-14 h-14 md:w-16 md:h-16 rounded-full bg-gradient-to-br from-red-600 to-red-700 text-white shadow-2xl shadow-red-600/50 flex items-center justify-center z-[999999] pointer-events-auto cursor-pointer border border-red-500/50 hover:shadow-red-600/70 transition-all group"
+          style={{ isolation: 'isolate', touchAction: 'manipulation' }}
+          title={isRTL ? "العودة للمحراب" : "Back to Sanctuary"}
+        >
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 3, repeat: Infinity, ease: 'linear' }}
+            className="absolute inset-0 rounded-full border border-red-400/20 group-hover:border-red-400/40"
+          />
+          <ArrowLeft size={24} className={`text-white relative z-10 ${isRTL ? 'rotate-180' : ''}`} />
+        </motion.button>
+      )}
     </div>
   );
 };
