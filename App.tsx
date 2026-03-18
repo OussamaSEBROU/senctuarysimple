@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ViewState, Language, Insight } from './types';
-import type { Book, ShelfData } from './types';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ViewState } from './types';
+import type { Language, Insight, Book, ShelfData } from './types';
 import { Layout } from './components/Layout';
 import { Shelf } from './components/Shelf';
 import { Reader } from './components/Reader';
@@ -71,12 +71,12 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleOnboardingComplete = () => {
+  const handleOnboardingComplete = useCallback(() => {
     localStorage.setItem('sanctuary_onboarding_seen', 'true');
     setShowOnboarding(false);
-  };
+  }, []);
 
-  const confirmDeleteBook = async () => {
+  const confirmDeleteBook = useCallback(async () => {
     if (!bookToDelete || deleteConfirmInput !== 'امسح من المحراب') return;
     
     await pdfStorage.deleteFile(bookToDelete.id);
@@ -91,7 +91,7 @@ const App: React.FC = () => {
     if (activeBookIndex >= updatedBooks.filter(b => b.shelfId === activeShelfId).length) {
       setActiveBookIndex(Math.max(0, updatedBooks.filter(b => b.shelfId === activeShelfId).length - 1));
     }
-  };
+  }, [bookToDelete, deleteConfirmInput, activeBookIndex, activeShelfId]);
 
   useEffect(() => {
     if (view === ViewState.SHELF) {
@@ -113,7 +113,7 @@ const App: React.FC = () => {
   }, []);
 
   const t = translations[lang];
-  const filteredBooks = books.filter(b => b.shelfId === activeShelfId);
+  const filteredBooks = useMemo(() => books.filter(b => b.shelfId === activeShelfId), [books, activeShelfId]);
   const fontClass = lang === 'ar' ? 'font-ar' : 'font-en';
 
   const habitData = useMemo(() => storageService.getHabitData(), [books]);
@@ -138,13 +138,14 @@ const App: React.FC = () => {
     return { minutes: 0, stars: 0 };
   }, [filteredBooks, activeBookIndex]);
 
+  const booksCount = books.length;
   const insights = useMemo<Insight[]>(() => {
     const list: Insight[] = [];
     const isRTL = lang === 'ar';
     const streak = habitData.streak;
     
     // 0. First Experience / Empty State (Strictly Exclusive)
-    if (books.length === 0) {
+    if (booksCount === 0) {
       list.push({
         text: isRTL ? 'مرحباً بك .. في منصة المحراب تؤسس وعيك وتمركز ثقافتك كل يوم' : 'Welcome to the elite.. Here we craft awareness and reshape thought.',
         icon: <Sparkles size={16} className="text-[#ff0000] drop-shadow-[0_0_8px_rgba(255,0,0,0.6)]" />,
@@ -176,7 +177,7 @@ const App: React.FC = () => {
         isShining: true
       });
       
-      return list; // Return early so daily habit notes don't show for empty state
+      return list;
     }
 
     // 1. Rescue Alert (Only for active users)
@@ -234,16 +235,16 @@ const App: React.FC = () => {
     }
 
     // 5. Library Stats
-    const totalBooks = books.length;
-    if (totalBooks > 0) {
+    if (booksCount > 0) {
       list.push({
-        text: isRTL ? `محرابك يحتوي الآن على ${totalBooks} كتاباً.` : `Your sanctuary now holds ${totalBooks} volumes.`,
+        text: isRTL ? `محرابك يحتوي الآن على ${booksCount} كتاباً.` : `Your sanctuary now holds ${booksCount} volumes.`,
         icon: <Library size={14} className="text-purple-400" />,
         color: 'border-purple-400/20 bg-purple-400/5'
       });
     }
 
     // 6. Total Time Stats
+    // Use a more stable dependency for total time if possible, or just keep it
     const totalSeconds = books.reduce((acc, b) => acc + b.timeSpentSeconds, 0);
     const totalHours = (totalSeconds / 3600).toFixed(1);
     if (parseFloat(totalHours) > 0) {
@@ -262,7 +263,7 @@ const App: React.FC = () => {
     });
 
     return list;
-  }, [habitData, totalTodayMinutes, lang, books]);
+  }, [habitData, totalTodayMinutes, lang, booksCount]);
 
   useEffect(() => {
     if (insights.length <= 1) return;
@@ -327,26 +328,26 @@ const App: React.FC = () => {
     if (activeShelfId === shelfId) setActiveShelfId('default');
   };
 
-  const handleReaderBack = React.useCallback(() => {
-    console.log("App: handleReaderBack triggered");
-    const updatedBooks = storageService.getBooks();
-    setBooks(updatedBooks);
-    setSelectedBook(null);
-    setView(ViewState.SHELF);
-    // Force a small delay to ensure state updates before any other interactions
-    setTimeout(() => {
-      window.dispatchEvent(new Event('resize'));
-    }, 100);
+  const handleReaderBack = useCallback(() => {
+    console.log('handleReaderBack called');
+    try {
+      const updatedBooks = storageService.getBooks();
+      setBooks(updatedBooks);
+      setView(ViewState.SHELF);
+    } catch (error) {
+      console.error('Error in handleReaderBack:', error);
+      setView(ViewState.SHELF);
+    }
   }, []);
 
-  const handleStatsUpdate = React.useCallback((starReached?: number | null) => {
+  const handleStatsUpdate = useCallback((starReached?: number | null) => {
     setBooks(storageService.getBooks());
     if (starReached) {
       setCelebrationStar(starReached);
     }
   }, []);
 
-  const handleCelebrationComplete = React.useCallback(() => {
+  const handleCelebrationComplete = useCallback(() => {
     setCelebrationStar(null);
   }, []);
 
@@ -356,20 +357,20 @@ const App: React.FC = () => {
         {/* Sidebar Navigation - Fixed z-index and functionality */}
         <AnimatePresence>
           {isSidebarOpen && (
-            <React.Fragment key="sidebar-container">
+            <MotionDiv key="sidebar-container" className="fixed inset-0 z-[4000] pointer-events-none">
               <MotionDiv 
                 initial={{ opacity: 0 }} 
                 animate={{ opacity: 1 }} 
                 exit={{ opacity: 0 }} 
                 onClick={() => setIsSidebarOpen(false)} 
-                className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[4000] pointer-events-auto" 
+                className="absolute inset-0 bg-black/95 backdrop-blur-xl pointer-events-auto" 
               />
               <MotionAside
                 initial={{ x: lang === 'ar' ? '100%' : '-100%' }} 
                 animate={{ x: 0 }} 
                 exit={{ x: lang === 'ar' ? '100%' : '-100%' }}
                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className={`fixed top-0 bottom-0 ${lang === 'ar' ? 'right-0' : 'left-0'} w-[85vw] md:w-80 bg-[#050f05] border-none z-[4100] flex flex-col shadow-2xl overflow-hidden pointer-events-auto`}
+                className={`absolute top-0 bottom-0 ${lang === 'ar' ? 'right-0' : 'left-0'} w-[85vw] md:w-80 bg-[#050f05] border-none flex flex-col shadow-2xl overflow-hidden pointer-events-auto`}
               >
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,0,0,0.05),transparent_70%)] pointer-events-none" />
                 <div className="p-6 md:p-8 flex items-center justify-between border-b border-white/5 shrink-0 relative z-10">
@@ -500,15 +501,15 @@ const App: React.FC = () => {
                   </div>
                 </div>
               </MotionAside>
-            </React.Fragment>
+            </MotionDiv>
           )}
         </AnimatePresence>
 
         {/* Global Fixed Controls - Elevated z-index to ensure visibility and clickability */}
-        <div className={`fixed top-0 left-0 right-0 p-3 md:p-8 pointer-events-none flex justify-between items-center ${view === ViewState.READER ? 'z-[1000]' : 'z-[3000]'}`}>
+        <div className="fixed top-0 left-0 right-0 z-[3000] p-3 md:p-8 pointer-events-none flex justify-between items-center">
           <button 
             onClick={() => setIsSidebarOpen(true)} 
-            className={`p-3 md:p-5 rounded-full bg-black/60 backdrop-blur-2xl border border-white/10 pointer-events-auto hover:bg-[#ff0000] hover:border-[#ff0000] transition-all shadow-2xl group active:scale-95 z-[3001] ${view === ViewState.READER ? 'hidden' : ''}`}
+            className="p-3 md:p-5 rounded-full bg-black/60 backdrop-blur-2xl border border-white/10 pointer-events-auto hover:bg-[#ff0000] hover:border-[#ff0000] transition-all shadow-2xl group active:scale-95 z-[3001]"
           >
             <Menu size={18} className="group-hover:text-white text-white/40 md:size-6"/>
           </button>
@@ -542,7 +543,7 @@ const App: React.FC = () => {
 
         {/* Main Content View Switcher */}
         <div className="flex-1 relative overflow-hidden flex flex-col">
-          <AnimatePresence mode="wait">
+          <AnimatePresence>
             {view === ViewState.SHELF && (
               <MotionDiv key="shelf" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex flex-col relative">
                 <header className="flex flex-col items-center text-center pt-20 md:pt-4 pb-2 md:pb-1 shrink-0 overflow-visible">
@@ -634,7 +635,14 @@ const App: React.FC = () => {
               </MotionDiv>
             )}
             {view === ViewState.READER && selectedBook && (
-              <MotionDiv key="reader" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="fixed inset-0 z-[5000]">
+              <MotionDiv 
+                key="reader" 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+                animate={{ opacity: 1, scale: 1, y: 0 }} 
+                exit={{ opacity: 0, scale: 1.05, y: -20, pointerEvents: "none" }}
+                transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                className="fixed inset-0 z-[5000] bg-[#000a00]"
+              >
                 <Reader 
                   book={selectedBook} 
                   lang={lang} 
@@ -650,10 +658,10 @@ const App: React.FC = () => {
         {/* Overlay Modals */}
         <AnimatePresence>
           {showOnboarding && (
-            <Onboarding lang={lang} onComplete={handleOnboardingComplete} />
+            <Onboarding key="onboarding-modal" lang={lang} onComplete={handleOnboardingComplete} />
           )}
           {isAddingBook && (
-            <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[6000] flex items-center justify-center p-0 md:p-6 bg-black/98 backdrop-blur-3xl">
+            <MotionDiv key="adding-book" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[6000] flex items-center justify-center p-0 md:p-6 bg-black/98 backdrop-blur-3xl">
               <MotionDiv initial={{ scale: 0.95, y: 30 }} animate={{ scale: 1, y: 0 }} className="bg-[#0b140b] border border-white/5 p-8 md:p-12 rounded-none md:rounded-[4rem] w-full max-w-xl min-h-screen md:min-h-0 shadow-2xl relative flex flex-col justify-center">
                 <button onClick={() => setIsAddingBook(false)} className="absolute top-6 right-6 md:top-10 md:right-10 p-2 rounded-full bg-white/5 text-white/20 hover:text-white transition-colors"><X size={20} className="md:size-6" /></button>
                 <h2 className="text-xl md:text-3xl font-black mb-8 md:mb-12 text-white uppercase italic flex items-center gap-4 md:gap-5 leading-none"><BookOpen size={32} className="text-[#ff0000] md:size-11" /> {t.newIntake}</h2>
@@ -673,7 +681,7 @@ const App: React.FC = () => {
           )}
 
           {isAddingShelf && (
-            <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[6000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-2xl">
+            <MotionDiv key="adding-shelf" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[6000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-2xl">
               <MotionDiv initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-[#0b140b] border border-white/10 p-10 md:p-12 rounded-[2.5rem] md:rounded-[4rem] w-full max-w-md shadow-2xl text-center">
                 <h3 className="text-2xl md:text-3xl font-black uppercase italic text-white mb-8 md:mb-10">{lang === 'ar' ? 'إنشاء رف' : 'New Shelf'}</h3>
                 <input autoFocus type="text" value={newShelfName} onChange={e => setNewShelfName(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl md:rounded-2xl p-4 md:p-6 text-xs md:text-sm font-bold text-white outline-none mb-8 md:mb-10 focus:border-[#ff0000]/50" placeholder={lang === 'ar' ? 'اسم الرف...' : 'Shelf Name...'} />
@@ -684,6 +692,7 @@ const App: React.FC = () => {
 
           {celebrationStar && (
             <CelebrationOverlay 
+              key="celebration-modal"
               starCount={celebrationStar} 
               lang={lang} 
               onComplete={handleCelebrationComplete} 
@@ -691,7 +700,7 @@ const App: React.FC = () => {
           )}
 
           {bookToDelete && (
-            <MotionDiv initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[7000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl">
+            <MotionDiv key="delete-book" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[7000] flex items-center justify-center p-6 bg-black/95 backdrop-blur-3xl">
               <MotionDiv initial={{ scale: 0.9, y: 40 }} animate={{ scale: 1, y: 0 }} className="bg-[#0b140b] border border-white/10 p-10 md:p-14 rounded-[4rem] w-full max-w-lg shadow-[0_30px_100px_rgba(255,0,0,0.15)] relative text-center overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-b from-red-600/5 to-transparent pointer-events-none" />
                 
