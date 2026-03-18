@@ -139,20 +139,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
     onBack();
   }, [onBack]);
 
-  useEffect(() => {
-    // Native event listener as a failsafe
-    const handleNativeClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest('#reader-back-button')) {
-        console.log("Native: Back button clicked");
-        e.preventDefault();
-        e.stopPropagation();
-        forceBack();
-      }
-    };
-    document.addEventListener('click', handleNativeClick, true);
-    return () => document.removeEventListener('click', handleNativeClick, true);
-  }, [forceBack]);
+  // Back button handler is now directly attached to the button component for better React compatibility.
 
   useEffect(() => {
     if (!roomId) return;
@@ -963,17 +950,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
               {!roomId ? (
                 <button 
                   id="reader-back-button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log("React: Back button clicked");
-                    onBack();
-                  }} 
+                  onClick={onBack} 
                   className="group flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-white/10 hover:bg-red-600 border border-white/20 hover:border-red-500 rounded-xl transition-all active:scale-95 relative z-[1000000] pointer-events-auto cursor-pointer shadow-2xl" 
-                  style={{ isolation: 'isolate', touchAction: 'manipulation' }}
+                  style={{ isolation: 'isolate', touchAction: 'auto' }}
                   title={isRTL ? "العودة للمحراب" : "Back to Sanctuary"}
                 >
-                  <Home size={18} className="text-white group-hover:text-white transition-colors" />
+                  <ArrowLeft size={18} className={`text-white group-hover:text-white transition-colors ${isRTL ? 'rotate-180' : ''}`} />
                   <div className="h-4 w-[1px] bg-white/20 group-hover:bg-white/40" />
                   <span className="text-[10px] font-black uppercase tracking-widest text-white group-hover:text-white transition-colors">
                     {isRTL ? "المحراب" : "Sanctuary"}
@@ -981,14 +963,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
                 </button>
               ) : (
                 <button 
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onBack();
-                  }} 
-                  onMouseDown={(e) => {
-                    e.stopPropagation();
-                  }}
+                  onClick={onBack} 
                   className="flex items-center gap-2 px-3 py-1.5 md:px-5 md:py-2.5 bg-red-600 text-white rounded-full hover:bg-red-700 transition-all group active:scale-95 shrink-0 relative z-[100000] pointer-events-auto cursor-pointer"
                   style={{ isolation: 'isolate' }}
                 >
