@@ -1,5 +1,4 @@
 
-// Version: 1.1.0 - Refined Header & Session Mode
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Language, Book, ChatMessage, Annotation } from '../types';
@@ -14,7 +13,8 @@ import {
   Edit3, Sun, Clock, BoxSelect, Palette, Check, LayoutGrid,
   FileAudio, Users, Send, MessageCircle, Share2, Zap,
   Mic, MicOff, Hand, Ghost, BookOpen,
-  PhoneOff, Video, VideoOff, MoreVertical, Monitor, ArrowLeft
+  PhoneOff, Video, VideoOff, MoreVertical, Monitor, ArrowLeft,
+  Underline
 } from 'lucide-react';
 import { Socket } from 'socket.io-client';
 import Peer from 'simple-peer';
@@ -96,7 +96,7 @@ const SOUNDS = [
 const TOOL_ICONS = {
   view: MousePointer2,
   highlight: Highlighter,
-  underline: PenTool,
+  underline: Underline,
   box: BoxSelect,
   note: MessageSquare
 };
@@ -735,7 +735,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
         x: currentRect.x, 
         y: currentRect.y, 
         width: currentRect.w, 
-        height: activeTool === 'underline' ? 0.8 : currentRect.h, 
+        height: activeTool === 'underline' ? 2 : currentRect.h, 
         color: activeColor, 
         text: '', title: '' 
       };
@@ -1175,12 +1175,12 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
                 {annotations.filter(a => a.pageIndex === currentPage).map(anno => (
                   <div key={anno.id} className="absolute pointer-events-auto cursor-pointer" onClick={() => setEditingAnnoId(anno.id)}
                     style={{ left: `${anno.x}%`, top: `${anno.y}%`, width: anno.width ? `${anno.width}%` : '0%', height: anno.height ? `${anno.height}%` : '0%', 
-                      backgroundColor: anno.type === 'highlight' ? `${anno.color}44` : 'transparent', borderBottom: anno.type === 'underline' ? `3px solid ${anno.color}` : 'none', border: anno.type === 'box' ? `2px solid ${anno.color}` : 'none' }}
+                      backgroundColor: anno.type === 'highlight' ? `${anno.color}44` : 'transparent', borderBottom: anno.type === 'underline' ? `4px solid ${anno.color}` : 'none', border: anno.type === 'box' ? `2px solid ${anno.color}` : 'none' }}
                   >
                     {anno.type === 'note' && <div className="w-7 h-7 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-2xl border-2 border-white flex items-center justify-center" style={{ backgroundColor: anno.color }}><MessageSquare size={12} className="text-white" /></div>}
                   </div>
                 ))}
-                {currentRect && <div className="absolute border-2 border-dashed pointer-events-none" style={{ left: `${currentRect.x}%`, top: `${currentRect.y}%`, width: `${currentRect.w}%`, height: `${activeTool === 'underline' ? 0.8 : currentRect.h}%`, borderColor: activeColor, backgroundColor: activeTool === 'highlight' ? `${activeColor}22` : 'transparent' }} />}
+                {currentRect && <div className="absolute border-2 border-dashed pointer-events-none" style={{ left: `${currentRect.x}%`, top: `${currentRect.y}%`, width: `${currentRect.w}%`, height: `${activeTool === 'underline' ? 2 : currentRect.h}%`, borderColor: activeColor, backgroundColor: activeTool === 'highlight' ? `${activeColor}22` : 'transparent' }} />}
               </div>
             </MotionDiv>
           </div>
