@@ -1331,7 +1331,7 @@ export const Reader: React.FC<ReaderProps> = ({ book, lang, userId, onBack, onSt
               </div>
               <div className="flex gap-2 mt-4 pt-3 border-t border-white/5">
                 <button onClick={() => { setAnnotations(annotations.filter(a => a.id !== editingAnnoId)); setEditingAnnoId(null); }} className="w-9 h-9 bg-red-600/10 border border-red-600/20 text-red-600 rounded-lg flex items-center justify-center hover:bg-red-600 hover:text-white transition-all"><Trash2 size={14}/></button>
-                <button onClick={() => setEditingAnnoId(null)} className="flex-1 bg-white text-black py-2 rounded-lg font-black uppercase text-[8px] tracking-widest hover:bg-red-600 hover:text-white transition-all flex items-center justify-center gap-2"><Check size={12}/>{isRTL ? 'حفظ بالفهرس' : 'Save to Index'}</button>
+                <button onClick={() => { setEditingAnnoId(null); setActiveTool('view'); }} className="flex-1 bg-white text-black py-2 rounded-lg font-black uppercase text-[8px] tracking-widest hover:bg-red-600 hover:text-white transition-all flex items-center justify-center gap-2"><Check size={12}/>{isRTL ? 'حفظ بالفهرس' : 'Save to Index'}</button>
               </div>
             </MotionDiv>
           </MotionDiv>
