@@ -78,7 +78,7 @@ const App: React.FC = () => {
   }, []);
 
   const confirmDeleteBook = useCallback(async () => {
-    if (!bookToDelete || deleteConfirmInput !== 'امسح من المحراب') return;
+    if (!bookToDelete || deleteConfirmInput.trim() !== 'امسح من المحراب') return;
     
     await pdfStorage.deleteFile(bookToDelete.id);
     storageService.deleteBook(bookToDelete.id);
@@ -745,8 +745,8 @@ const App: React.FC = () => {
                       </button>
                       <button 
                         onClick={confirmDeleteBook}
-                        disabled={deleteConfirmInput !== 'امسح من المحراب'}
-                        className={`flex-1 py-5 rounded-[2rem] font-black text-xs uppercase tracking-[0.3em] transition-all shadow-2xl ${deleteConfirmInput === 'امسح من المحراب' ? 'bg-red-600 text-white hover:bg-red-700 active:scale-95' : 'bg-white/5 text-white/10 cursor-not-allowed'}`}
+                        disabled={deleteConfirmInput.trim() !== 'امسح من المحراب'}
+                        className={`flex-1 py-5 rounded-[2rem] font-black text-xs uppercase tracking-[0.3em] transition-all shadow-2xl ${deleteConfirmInput.trim() === 'امسح من المحراب' ? 'bg-red-600 text-white hover:bg-red-700 active:scale-95' : 'bg-white/5 text-white/10 cursor-not-allowed'}`}
                       >
                         {lang === 'ar' ? 'تأكيد الحذف' : 'Confirm Deletion'}
                       </button>
